@@ -220,6 +220,10 @@ fgimple
 C Var(flag_gimple) Init(0)
 Enable parsing GIMPLE.
 
+fvptr-encode
+C++ Var(flag_vptr_encode) Init(0)
+Encode the vptr stored inside polymorphic objects.
+
 H
 C ObjC C++ ObjC++
 Print the name of header files as they are used.

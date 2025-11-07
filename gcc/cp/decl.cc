@@ -67,6 +67,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "pretty-print-markup.h"
 #include "classalloca.h"
 
+extern tree encode_vptr (tree this_ptr, tree vtbl);   /* defined in class.cc */
+
 /* Possible cases of bad specifiers type used by bad_specifiers. */
 enum bad_spec_place {
   BSP_VAR,    /* variable */
@@ -5636,6 +5638,15 @@ cxx_init_decl_processing (void)
 			    CP_BUILT_IN_IS_POINTER_INTERCONVERTIBLE_WITH_CLASS,
 			    BUILT_IN_FRONTEND, NULL, NULL_TREE);
   set_call_expr_flags (decl, ECF_CONST | ECF_NOTHROW | ECF_LEAF);
+
+  tree pvoid = build_pointer_type (void_type_node);
+  tree restart_lifetime_ftype = build_function_type_list (pvoid, pvoid, pvoid, NULL_TREE);
+  decl
+    = add_builtin_function ("__builtin_restart_lifetime",
+                        restart_lifetime_ftype,
+                        CP_BUILT_IN_RESTART_LIFETIME,
+                        BUILT_IN_FRONTEND, NULL, NULL_TREE);
+  set_call_expr_flags (decl, ECF_NOTHROW);
 
   if (cxx_dialect >= cxx26)
     {
@@ -20652,6 +20663,7 @@ begin_destructor_body (void)
 
 	    tree vtbl_ptr = build_vfield_ref (ref, TREE_TYPE (binfo));
 	    tree vtbl = build_zero_cst (TREE_TYPE (vtbl_ptr));
+	    vtbl = encode_vptr (current_class_ptr, vtbl);
 	    tree stmt = cp_build_modify_expr (input_location, vtbl_ptr,
 					      NOP_EXPR, vtbl,
 					      tf_warning_or_error);

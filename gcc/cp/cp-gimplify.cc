@@ -45,6 +45,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "gcc-urlifier.h"
 #include "contracts.h" // build_contract_check ()
 #include "builtins.h"
+#include "options.h"
 
 /* Keep track of forward references to immediate-escalating functions in
    case they become consteval.  This vector contains ADDR_EXPRs and
@@ -1038,6 +1039,11 @@ cp_gimplify_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p)
 	      case CP_BUILT_IN_START_LIFETIME:
 		*expr_p = fold_convert (void_type_node,
 					CALL_EXPR_ARG (*expr_p, 0));
+	      case CP_BUILT_IN_RESTART_LIFETIME:
+		*expr_p
+		  = fold_builtin_restart_lifetime
+		    (EXPR_LOCATION (*expr_p), call_expr_nargs (*expr_p),
+		    &CALL_EXPR_ARG (*expr_p, 0));
 		break;
 	      default:
 		break;
@@ -4435,6 +4441,212 @@ fold_builtin_source_location (const_tree t)
   tree var = build_source_location_impl (loc, current_function_decl,
 					 source_location_impl);
   return build_fold_addr_expr_with_type_loc (loc, var, TREE_TYPE (t));
+}
+
+extern tree encode_vptr (tree this_ptr, tree vtbl);  /* Defined in class.cc  */
+
+/* Get the class type from an expression that is (or converts to) T*.  */
+static tree
+restart_lifetime_class_type_from_ptr (tree expr)
+{
+  tree x = expr;
+  STRIP_NOPS (x);
+  tree t = TREE_TYPE (x);
+  if (!t)
+    return NULL_TREE;
+
+  if (TREE_CODE (t) == POINTER_TYPE || TREE_CODE (t) == REFERENCE_TYPE)
+    t = TREE_TYPE (t);
+
+  t = TYPE_MAIN_VARIANT (t);
+  if (!CLASS_TYPE_P (t))
+    return NULL_TREE;
+
+  return t;
+}
+
+/* Forward decl; defined below.  */
+static tree restart_lifetime_for_binfo (location_t, tree, tree, tree);
+
+/* Handle polymorphic non-static data members of CLASSTYPE.
+   OBJ_PTR is a pointer to an object of type CLASSTYPE (T*).
+   SIDE_EFFECTS is a (possibly NULL) sequence of previous stores,
+   returned updated.  */
+static tree
+restart_lifetime_for_members (location_t loc, tree obj_ptr,
+                              tree classtype, tree side_effects)
+{
+  /* Indirect to get a reference to this object.  */
+  tree this_ref = cp_build_fold_indirect_ref (obj_ptr);
+
+  for (tree field = TYPE_FIELDS (classtype);
+       field;
+       field = TREE_CHAIN (field))
+    {
+      if (TREE_CODE (field) != FIELD_DECL)
+        continue;
+      if (TREE_STATIC (field))
+        continue;
+
+      tree ftype = TREE_TYPE (field);
+
+      /* For now, ignore arrays of polymorphic types; handling each element
+         would need a loop.  */
+      if (TREE_CODE (ftype) == ARRAY_TYPE)
+        continue;
+
+      tree mtype = TYPE_MAIN_VARIANT (ftype);
+      if (!CLASS_TYPE_P (mtype))
+        continue;
+
+      if (!TYPE_CONTAINS_VPTR_P (mtype)
+          || !COMPLETE_TYPE_P (mtype)
+          || !TYPE_BINFO (mtype))
+        continue;
+
+      /* If this member type has constexpr ctors, we expect its vptrs not
+         to be encoded at all; don't touch it here.  */
+      if (TYPE_HAS_CONSTEXPR_CTOR (mtype))
+        continue;
+
+      /* Build a reference to the member: this_ref.field.  */
+      tree mem_ref
+        = build3 (COMPONENT_REF, ftype, this_ref, field, NULL_TREE);
+
+      /* Take its address: &this_ref.field.  */
+      tree mem_ptr = cp_build_addr_expr (mem_ref, tf_warning_or_error);
+      if (mem_ptr == error_mark_node)
+        continue;
+
+      /* Reinit all vptrs in this member object by walking its BINFO tree.  */
+      side_effects =
+        restart_lifetime_for_binfo (loc, mem_ptr, TYPE_BINFO (mtype),
+                                    side_effects);
+    }
+
+  return side_effects;
+}
+
+/* Recursively emit vptr reinitialization stores for BINFO and all its bases.
+   OBJ_PTR is a pointer to the most-derived object (T*), whose BINFO tree
+   we are walking at the root, and which we always pass unchanged to
+   build_base_path.  SIDE_EFFECTS is a (possibly NULL) expression representing
+   the sequence of stores built so far; we return an updated sequence.  */
+static tree
+restart_lifetime_for_binfo (location_t loc, tree obj_ptr, tree binfo,
+                            tree side_effects)
+{
+  tree basetype = BINFO_TYPE (binfo);
+
+  /* Compute pointer to this base subobject inside the complete object.  */
+  tree base_ptr
+    = build_base_path (PLUS_EXPR, obj_ptr, binfo,
+                       /*nonnull=*/1, tf_warning_or_error);
+  if (base_ptr == error_mark_node)
+    return side_effects;
+
+  /* If this base type uses encoded vptrs, reset its own vptr.  */
+  if (TYPE_CONTAINS_VPTR_P (basetype)
+      && !TYPE_HAS_CONSTEXPR_CTOR (basetype)
+      && COMPLETE_TYPE_P (basetype)
+      && TYPE_BINFO (basetype))
+    {
+      tree base_ref = cp_build_fold_indirect_ref (base_ptr);
+      tree vptr_lhs = build_vfield_ref (base_ref, basetype);
+
+      if (vptr_lhs != error_mark_node)
+        {
+          /* Canonical vtable pointer for this subobject.  */
+          tree vtbl = build_vtbl_address (binfo);
+          vtbl = convert_force (TREE_TYPE (vptr_lhs), vtbl,
+                                0, tf_warning_or_error);
+          vtbl = encode_vptr (base_ptr, vtbl);
+
+          tree store = cp_build_modify_expr (loc, vptr_lhs, NOP_EXPR, vtbl,
+                                             tf_warning_or_error);
+
+          if (!side_effects)
+            side_effects = store;
+          else
+            side_effects = build2 (COMPOUND_EXPR, void_type_node,
+                                   side_effects, store);
+        }
+    }
+
+  /* Also fix vptrs of any polymorphic member subobjects of this base.  */
+  side_effects =
+    restart_lifetime_for_members (loc, base_ptr, basetype, side_effects);
+
+  /* Recurse into direct bases.  */
+  int n = BINFO_N_BASE_BINFOS (binfo);
+  for (int i = 0; i < n; ++i)
+    {
+      tree base_binfo = BINFO_BASE_BINFO (binfo, i);
+      side_effects =
+        restart_lifetime_for_binfo (loc, obj_ptr, base_binfo, side_effects);
+    }
+
+  return side_effects;
+}
+
+tree
+fold_builtin_restart_lifetime (location_t loc, int nargs, tree *args)
+{
+  if (nargs != 2)
+    {
+      error_at (loc,
+                "%<__builtin_restart_lifetime%> expects 2 arguments, "
+                "the old address followed by the new address");
+      return error_mark_node;
+    }
+
+  tree oldp = args[0];
+  tree newp = args[1];
+
+  /* If vptr-encoding is not enabled, restarting lifetime needs no vptr fixups.  */
+  if (!flag_vptr_encode)
+    return build2 (COMPOUND_EXPR, TREE_TYPE (newp), oldp, newp);
+
+  /* Result type – match the pointer we’re returning.  */
+  tree rettype = TREE_TYPE (newp);
+
+  /* Find the dynamic class type from the pointer arguments.  Prefer NEWP.  */
+  tree classtype = restart_lifetime_class_type_from_ptr (newp);
+  if (!classtype)
+    classtype = restart_lifetime_class_type_from_ptr (oldp);
+
+  /* If we can't find a suitable class type, or it's not polymorphic, or
+     incomplete, just evaluate OLD and return NEW.  */
+  if (!classtype
+      || !TYPE_CONTAINS_VPTR_P (classtype)
+      || !COMPLETE_TYPE_P (classtype)
+      || !TYPE_BINFO (classtype))
+    return build2 (COMPOUND_EXPR, rettype, oldp, newp);
+
+  /* If the outer class has constexpr ctors, its vptrs are not encoded
+     at all by our scheme; do nothing.  */
+  if (TYPE_HAS_CONSTEXPR_CTOR (classtype))
+    return build2 (COMPOUND_EXPR, rettype, oldp, newp);
+
+  /* Avoid evaluating NEWP twice.  */
+  if (TREE_SIDE_EFFECTS (newp))
+    newp = save_expr (newp);
+
+  /* Treat NEWP as pointer to the most-derived object.  */
+  tree ptr_T = build_pointer_type (classtype);
+  tree newp_as_T = build_nop (ptr_T, newp);
+
+  /* Emit vptr reinit stores for the whole BINFO tree (bases + members).  */
+  tree effects
+    = restart_lifetime_for_binfo (loc, newp_as_T, TYPE_BINFO (classtype),
+                                  NULL_TREE);
+
+  if (!effects)
+    return build2 (COMPOUND_EXPR, rettype, oldp, newp);
+
+  /* Preserve OLD's side effects as well: (oldp, effects, newp).  */
+  tree seq = build2 (COMPOUND_EXPR, void_type_node, oldp, effects);
+  return build2 (COMPOUND_EXPR, rettype, seq, newp);
 }
 
 #include "gt-cp-cp-gimplify.h"

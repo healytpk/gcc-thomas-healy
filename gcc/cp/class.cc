@@ -38,6 +38,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "intl.h"
 #include "asan.h"
 #include "contracts.h"
+#include "options.h"
 
 /* Id for dumping the class hierarchy.  */
 int class_dump_id;
@@ -208,6 +209,87 @@ static bool type_maybe_constexpr_default_constructor (tree);
 static bool type_maybe_constexpr_destructor (tree);
 static bool field_poverlapping_p (tree);
 static void propagate_class_warmth_attribute (tree);
+
+/* Use XOR to encode the vtable pointer for the given object.  */
+
+static tree
+xor_vptr_with_this (tree this_ptr, tree vtbl)
+{
+  tree v_as_int = fold_convert (pointer_sized_int_node, vtbl);
+  tree key      = fold_convert (pointer_sized_int_node, this_ptr);
+  tree xored    = fold_build2  (BIT_XOR_EXPR, pointer_sized_int_node, v_as_int, key);
+  return fold_convert (TREE_TYPE (vtbl), xored);
+}
+
+/* Get the class type from a 'this' expression (pointer or reference).  */
+
+static tree
+vptr_class_type_from_this (tree this_ptr)
+{
+  tree t = TREE_TYPE (this_ptr);
+  if (!t)
+    return NULL_TREE;
+
+  if (INDIRECT_TYPE_P (t))
+    t = TREE_TYPE (t);
+
+  if (TREE_CODE (t) != RECORD_TYPE && TREE_CODE (t) != UNION_TYPE)
+    return NULL_TREE;
+
+  return TYPE_MAIN_VARIANT (t);
+}
+
+tree
+encode_vptr (tree this_ptr, tree vtbl)
+{
+  /* Enabled only with -fvptr-encode.  */
+  if (!flag_vptr_encode)
+    return vtbl;
+
+  tree classtype = vptr_class_type_from_this (this_ptr);
+
+  /* For classes with constexpr ctors, never encode the vptr.  */
+  if (classtype && TYPE_HAS_CONSTEXPR_CTOR (classtype))
+    return vtbl;
+
+  /* First XOR with 'this'. */
+  tree ptr_type  = TREE_TYPE (vtbl);
+  tree encoded   = xor_vptr_with_this (this_ptr, vtbl);
+
+  /* Then set the least significant bit as a tag. */
+  tree encoded_int = fold_convert (sizetype, encoded);
+  tree tag         = build_int_cst (sizetype, 1);
+  encoded_int      = fold_build2 (BIT_IOR_EXPR, sizetype, encoded_int, tag);
+
+  return fold_convert (ptr_type, encoded_int);
+}
+
+tree
+decode_vptr (tree this_ptr, tree vtbl)
+{
+  /* If the feature is off, never treat the low bit as a tag.  */
+  if (!flag_vptr_encode)
+    return vtbl;
+
+  tree ptr_type  = TREE_TYPE (vtbl);
+  tree vtbl_int  = fold_convert (sizetype, vtbl);
+  tree tag       = build_int_cst (sizetype, 1);
+
+  /* Is the tag bit set? */
+  tree tagged = fold_build2 (BIT_AND_EXPR, sizetype, vtbl_int, tag);
+  tree cond   = fold_build2 (NE_EXPR, boolean_type_node,
+                             tagged, build_int_cst (sizetype, 0));
+
+  /* Clear the tag bit. */
+  tree clear_mask   = fold_build1 (BIT_NOT_EXPR, sizetype, tag);
+  tree untagged_int = fold_build2 (BIT_AND_EXPR, sizetype, vtbl_int, clear_mask);
+  tree untagged     = fold_convert (ptr_type, untagged_int);
+
+  /* If tagged, decode (XOR with this); otherwise return as-is. */
+  tree decoded = xor_vptr_with_this (this_ptr, untagged);
+
+  return build3 (COND_EXPR, ptr_type, cond, decoded, vtbl);
+}
 
 /* Set CURRENT_ACCESS_SPECIFIER based on the protection of DECL.  */
 
@@ -484,6 +566,8 @@ build_base_path (enum tree_code code,
 	    }
 	  v_offset = build_vfield_ref (cp_build_fold_indirect_ref (t),
 	  TREE_TYPE (TREE_TYPE (expr)));
+	  if (v_offset == error_mark_node) return error_mark_node;
+	  v_offset = decode_vptr (t, v_offset);
 	}
 
       if (v_offset == error_mark_node)
@@ -764,7 +848,15 @@ build_vtbl_ref (tree instance, tree idx)
     }
 
   if (!vtbl)
+  {
     vtbl = build_vfield_ref (instance, basetype);
+    gcc_assert (vtbl != error_mark_node);
+    /* Dynamic case: load vptr from the object and decode it.  */
+    tree this_ptr;
+    if (INDIRECT_TYPE_P (TREE_TYPE (instance))) this_ptr = instance;    /* INSTANCE is already a pointer/reference.            */
+    else this_ptr = cp_build_addr_expr (instance, tf_warning_or_error); /* INSTANCE is an object; use its address as the key.  */
+    vtbl = decode_vptr (this_ptr, vtbl);
+  }
 
   aref = build_array_ref (input_location, vtbl, idx);
   TREE_CONSTANT (aref) |= TREE_CONSTANT (vtbl) && TREE_CONSTANT (idx);

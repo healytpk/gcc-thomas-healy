@@ -27,6 +27,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "attribs.h"
 #include "asan.h"
 
+extern tree encode_vptr (tree this_ptr, tree vtbl);   /* defined in class.cc */
+
 /* Test if we should instrument vptr access.  */
 
 static bool
@@ -319,6 +321,7 @@ cp_ubsan_dfs_initialize_vtbl_ptrs (tree binfo, void *data)
 
       /* Assign NULL to the vptr.  */
       tree vtbl = build_zero_cst (TREE_TYPE (vtbl_ptr));
+      vtbl = encode_vptr (base_ptr, vtbl);  // encode "null vptr" as encoded null
       tree stmt = cp_build_modify_expr (input_location, vtbl_ptr, NOP_EXPR,
 					vtbl, tf_warning_or_error);
       if (vptr_via_virtual_p (binfo))

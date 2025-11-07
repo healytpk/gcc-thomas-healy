@@ -7256,6 +7256,7 @@ enum cp_built_in_function {
   CP_BUILT_IN_UNCAUGHT_EXCEPTIONS,
   CP_BUILT_IN_IS_WITHIN_LIFETIME,
   CP_BUILT_IN_START_LIFETIME,
+  CP_BUILT_IN_RESTART_LIFETIME,
   CP_BUILT_IN_LAST
 };
 
@@ -9273,6 +9274,7 @@ extern tree process_stmt_assume_attribute	(tree, tree, location_t);
 extern bool simple_empty_class_p		(tree, tree, tree_code);
 extern tree build_source_location_impl		(location_t, tree, tree);
 extern tree fold_builtin_source_location	(const_tree);
+extern tree fold_builtin_restart_lifetime	(location_t, int, tree *);
 extern tree get_source_location_impl_type	();
 extern bool immediate_escalating_function_p	(tree);
 extern void promote_function_to_consteval	(tree);

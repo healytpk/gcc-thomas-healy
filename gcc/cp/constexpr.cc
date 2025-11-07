@@ -43,6 +43,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "toplev.h"
 #include "contracts.h"
 
+extern tree decode_vptr (tree this_ptr, tree vtbl);   /* defined in class.cc */
+
 static bool verify_constant (tree, bool, bool *, bool *);
 #define VERIFY_CONSTANT(X)						\
 do {									\
@@ -3134,6 +3136,23 @@ cxx_eval_builtin_function_call (const constexpr_ctx *ctx, tree t, tree fun,
 	}
       new_call = fold_builtin_is_string_literal (loc, nargs, args);
     }
+  else if (fndecl_built_in_p (fun,
+			      CP_BUILT_IN_RESTART_LIFETIME,
+			      BUILT_IN_FRONTEND))
+    {
+#if 1
+      /* Easiest: forbid it in constant expressions. */
+      if (!*non_constant_p && !ctx->quiet)
+	error_at (EXPR_LOCATION (t),
+		  "%q+E is not a constant expression", t);
+      *non_constant_p = true;
+      return t;
+#else
+      location_t loc = EXPR_LOCATION (t);
+      new_call = fold_builtin_restart_lifetime (loc, nargs, args);
+      /* deliberate fall through here -- no return statement */
+#endif
+    }
   else
     new_call = fold_builtin_call_array (EXPR_LOCATION (t), TREE_TYPE (t),
 					CALL_EXPR_FN (t), nargs, args);
@@ -4132,6 +4151,13 @@ cxx_eval_dynamic_cast_fn (const constexpr_ctx *ctx, tree call,
      considered to be a most derived object that has the type of the
      constructor or destructor's class.  */
   tree vtable = build_vfield_ref (obj, objtype);
+  if (vtable == error_mark_node)
+    {
+      *non_constant_p = true;
+      return call;   /* fall back to runtime behavior */
+    }
+  tree this_ptr = cp_build_addr_expr (obj, complain);
+  vtable = decode_vptr (this_ptr, vtable);
   vtable = cxx_eval_constant_expression (ctx, vtable, vc_prvalue,
 					 non_constant_p, overflow_p,
 					 jump_target);

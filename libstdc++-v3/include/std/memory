@@ -188,4 +188,49 @@ _GLIBCXX_END_NAMESPACE_VERSION
 # endif
 #endif // __cpp_lib_parallel_algorithm
 
+#if __cplusplus >= 201103L
+#include <cstdint>        // uintptr_t
+#include <type_traits>    // is_const, is_polymorphic
+namespace std _GLIBCXX_VISIBILITY(default)
+{
+_GLIBCXX_BEGIN_NAMESPACE_VERSION
+
+/// Restart the lifetime of an object after it has been relocated.
+#if 1
+template <typename _Tp>
+  _Tp*
+  restart_lifetime(const _Tp* const __old_p, void* const __new_p_void)
+  {
+    // I have only used C++11 features in this implementation.
+
+    // This is a naive implementation that will only XOR the vptr
+    // of the most-derived object -- it won't XOR the vptr inside
+    // sub-objects, and so will only work properly for simple classes.
+    // This implementation is only intended for testing until the
+    // compiler gets a built-in function to do this properly, e.g.
+    //                 __restart_lifetime
+
+    static_assert( false == is_const<_Tp>::value, "T must not be const" );
+    _Tp* const __new_p = static_cast< _Tp * >( __new_p_void );
+    if ( false == is_polymorphic<_Tp>::value ) return __new_p;
+    uintptr_t volatile &n = *static_cast<uintptr_t volatile*>( static_cast<void volatile*>( __new_p ) );
+    if ( 0u == (n & 1u) ) return __new_p;
+    n ^= reinterpret_cast<uintptr_t>( __old_p );
+    n ^= reinterpret_cast<uintptr_t>( __new_p );
+    return __new_p;
+  }
+#else
+template <typename _Tp>
+  _Tp*
+  restart_lifetime(const _Tp* const __old_p, void* const __new_p_void)
+  {
+    // cast away constness only for the builtin; semantics are “logically” const
+    return static_cast< _Tp* >( __builtin_restart_lifetime( const_cast< _Tp* >(__old_p), __new_p_void ) );
+  }
+#endif
+
+_GLIBCXX_END_NAMESPACE_VERSION
+} // namespace
+#endif // #if __cplusplus >= 201103L
+
 #endif /* _GLIBCXX_MEMORY */

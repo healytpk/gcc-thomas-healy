@@ -36,6 +36,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "stor-layout.h"
 #include "pointer-query.h"
 
+extern tree encode_vptr (tree this_ptr, tree vtbl);   /* defined in class.cc */
+
 static bool begin_init_stmts (tree *, tree *);
 static tree finish_init_stmts (bool, tree, tree);
 static void construct_virtual_base (tree, tree);
@@ -1729,6 +1731,7 @@ expand_virtual_init (tree binfo, tree decl)
 
   /* Assign the vtable to the vptr.  */
   vtbl = convert_force (TREE_TYPE (vtbl_ptr), vtbl, 0, tf_warning_or_error);
+  vtbl = encode_vptr (decl, vtbl);
   finish_expr_stmt (cp_build_modify_expr (input_location, vtbl_ptr, NOP_EXPR,
 					  vtbl, tf_warning_or_error));
 }
