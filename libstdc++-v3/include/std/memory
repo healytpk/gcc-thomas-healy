@@ -229,6 +229,20 @@ template <typename _Tp>
   }
 #endif
 
+/// Get the address of a polymorphic class's polymorphism facilitator
+#if defined(__cpp_consteval) && __cpp_consteval >= 201811L
+#  define _GLIBCXX_GET_POLYMORPHIC_FACILITATOR_SPEC consteval
+#else
+#  define _GLIBCXX_GET_POLYMORPHIC_FACILITATOR_SPEC constexpr
+#endif
+template <typename _Tp>
+  _GLIBCXX_GET_POLYMORPHIC_FACILITATOR_SPEC
+  void const *
+  get_polymorphic_facilitator(void) noexcept
+  {
+	return __builtin_get_polymorphic_facilitator( _Tp );
+  }
+
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace
 #endif // #if __cplusplus >= 201103L

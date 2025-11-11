@@ -3170,6 +3170,11 @@ diagnose_trait_expr (location_t loc, tree expr, tree args)
 
   switch (TRAIT_EXPR_KIND (expr))
     {
+    case CPTK_GET_POLYMORPHIC_FACILITATOR:
+      /* Never gives a compiler error for any type *
+       * because it returns a nullptr if the type  *
+       * doesn't have a polymorphic facilitator    */
+      break;
     case CPTK_HAS_NOTHROW_ASSIGN:
       inform (decl_loc, "%qT is not nothrow copy assignable", t1);
       break;

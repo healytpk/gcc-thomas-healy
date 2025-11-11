@@ -14489,6 +14489,7 @@ trait_expr_value (cp_trait_kind kind, tree type1, tree type2)
     case CPTK_RANK:
     case CPTK_TYPE_ORDER:
     case CPTK_STRUCTURED_BINDING_SIZE:
+    case CPTK_GET_POLYMORPHIC_FACILITATOR:
       gcc_unreachable ();
 
 #define DEFTRAIT_TYPE(CODE, NAME, ARITY) \
@@ -14641,6 +14642,10 @@ finish_trait_expr (location_t loc, cp_trait_kind kind, tree type1, tree type2,
 	  if (val != error_mark_node)
 	    TREE_TYPE (trait_expr) = TREE_TYPE (val);
 	}
+      else if (kind == CPTK_GET_POLYMORPHIC_FACILITATOR)
+	{
+	  TREE_TYPE (trait_expr) = const_ptr_type_node;   // void const *
+	}
       else
 	TREE_TYPE (trait_expr) = boolean_type_node;
       TRAIT_EXPR_TYPE1 (trait_expr) = type1;
@@ -14652,6 +14657,39 @@ finish_trait_expr (location_t loc, cp_trait_kind kind, tree type1, tree type2,
 
   switch (kind)
     {
+    case CPTK_GET_POLYMORPHIC_FACILITATOR:
+    {
+      tree type = type1;
+
+      /* Reference types are not supported: return nullptr.  */
+      if (TYPE_REF_P (type))
+        return build_zero_cst (const_ptr_type_node);
+
+      /* Strip cv-qualifiers.  */
+      type = cv_unqualified (type);
+
+      /* If it's not a class type at all, just return nullptr.  */
+      if (!CLASS_TYPE_P (type))
+        return build_zero_cst (const_ptr_type_node);   // (void const*)nullptr
+
+      /* If incomplete and can't be completed, return nullptr.  */
+      if (complete_type_or_else (type, NULL_TREE) == error_mark_node)
+        return build_zero_cst (const_ptr_type_node);
+
+      /* Non-polymorphic class => nullptr instead of error.  */
+      if (!TYPE_POLYMORPHIC_P (type))
+        return build_zero_cst (const_ptr_type_node);
+
+      tree binfo = TYPE_BINFO (type);
+      if (!binfo || binfo == error_mark_node)
+        return build_zero_cst (const_ptr_type_node);
+
+      tree vtbl = build_vtbl_address (binfo);
+      vtbl = convert (const_ptr_type_node, vtbl);      // force type to void const *
+      return maybe_wrap_with_location (vtbl, loc);
+    }
+    break;
+
     case CPTK_HAS_NOTHROW_ASSIGN:
     case CPTK_HAS_TRIVIAL_ASSIGN:
     case CPTK_HAS_NOTHROW_CONSTRUCTOR:
