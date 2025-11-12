@@ -3170,6 +3170,9 @@ diagnose_trait_expr (location_t loc, tree expr, tree args)
 
   switch (TRAIT_EXPR_KIND (expr))
     {
+    case CPTK_CONTAINS_MUTABLE:
+      // Pure boolean trait; diagnostics are handled by the enclosing constraint.
+      break;
     case CPTK_GET_POLYMORPHIC_FACILITATOR:
       /* Never gives a compiler error for any type *
        * because it returns a nullptr if the type  *

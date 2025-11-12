@@ -14490,6 +14490,7 @@ trait_expr_value (cp_trait_kind kind, tree type1, tree type2)
     case CPTK_TYPE_ORDER:
     case CPTK_STRUCTURED_BINDING_SIZE:
     case CPTK_GET_POLYMORPHIC_FACILITATOR:
+    case CPTK_CONTAINS_MUTABLE:
       gcc_unreachable ();
 
 #define DEFTRAIT_TYPE(CODE, NAME, ARITY) \
@@ -14646,6 +14647,10 @@ finish_trait_expr (location_t loc, cp_trait_kind kind, tree type1, tree type2,
 	{
 	  TREE_TYPE (trait_expr) = const_ptr_type_node;   // void const *
 	}
+      else if (kind == CPTK_CONTAINS_MUTABLE)
+	{
+	  TREE_TYPE (trait_expr) = boolean_type_node;    // bool
+	}
       else
 	TREE_TYPE (trait_expr) = boolean_type_node;
       TRAIT_EXPR_TYPE1 (trait_expr) = type1;
@@ -14657,6 +14662,80 @@ finish_trait_expr (location_t loc, cp_trait_kind kind, tree type1, tree type2,
 
   switch (kind)
     {
+    case CPTK_CONTAINS_MUTABLE:
+    {
+      tree type = type1;
+
+      /* Reference types are treated as having no mutable subobjects.  */
+      if (TYPE_REF_P (type))
+        return boolean_false_node;
+
+      /* Strip cv-qualifiers and get the main variant.  */
+      type = cv_unqualified (TYPE_MAIN_VARIANT (type));
+
+      /* Only class/union types can contain mutable members.  */
+      if (!CLASS_TYPE_P (type))
+        return boolean_false_node;
+
+      /* Ensure we have a complete type.  */
+      if (complete_type_or_else (type, NULL_TREE) == error_mark_node)
+        return boolean_false_node;
+
+      /* Worklist of types to visit (this type, its bases, and
+         any member subobject types).  */
+      auto_vec<tree, 8> worklist;
+      worklist.safe_push (type);
+
+      while (!worklist.is_empty ())
+        {
+          tree t = worklist.pop ();
+          t = cv_unqualified (TYPE_MAIN_VARIANT (t));
+
+          /* Check non-static data members.  */
+          for (tree fld = TYPE_FIELDS (t); fld; fld = DECL_CHAIN (fld))
+            {
+              if (TREE_CODE (fld) != FIELD_DECL)
+                continue;
+
+              if (DECL_MUTABLE_P (fld))
+                return boolean_true_node;
+
+              tree ftype = TREE_TYPE (fld);
+              ftype = cv_unqualified (TYPE_MAIN_VARIANT (ftype));
+
+              if (TREE_CODE (ftype) == ARRAY_TYPE)
+              {
+                tree elem = TREE_TYPE (ftype);
+                elem = cv_unqualified (TYPE_MAIN_VARIANT (elem));
+                if (CLASS_TYPE_P (elem))
+                  worklist.safe_push (elem);
+              }
+              else if (CLASS_TYPE_P (ftype))
+                worklist.safe_push (ftype);
+            }
+
+          /* Check direct base classes.  */
+          tree binfo = TYPE_BINFO (t);
+          if (!binfo)
+            continue;
+
+          int nbases = BINFO_N_BASE_BINFOS (binfo);
+          for (int i = 0; i < nbases; ++i)
+            {
+              tree base_binfo = BINFO_BASE_BINFO (binfo, i);
+              tree btype = BINFO_TYPE (base_binfo);
+              btype = cv_unqualified (TYPE_MAIN_VARIANT (btype));
+
+              if (CLASS_TYPE_P (btype))
+                worklist.safe_push (btype);
+            }
+        }
+
+      /* No mutable members found anywhere in the hierarchy.  */
+      return boolean_false_node;
+      }
+      break;
+
     case CPTK_GET_POLYMORPHIC_FACILITATOR:
     {
       tree type = type1;
