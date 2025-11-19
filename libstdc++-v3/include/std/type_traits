@@ -2790,9 +2790,14 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   struct __result_of_memfun_deref_impl
   {
     template<typename _Fp, typename _Tp1, typename... _Args>
-      static __result_of_success<decltype(
-      ((*std::declval<_Tp1>()).*std::declval<_Fp>())(std::declval<_Args>()...)
-      ), __invoke_memfun_deref> _S_test(int);
+      static auto _S_test(int) -> __result_of_success<
+        decltype( std::declval<_Tp1>().std_invoke_member_pointer(std::declval<_Fp>(), std::declval<_Args>()...) ),
+        __invoke_memfun_deref>;
+
+    template<typename _Fp, typename _Tp1, typename... _Args>
+      static auto _S_test(long) -> __result_of_success<
+        decltype( ((*std::declval<_Tp1>()).*std::declval<_Fp>())(std::declval<_Args>()...) ),
+        __invoke_memfun_deref>;
 
     template<typename...>
       static __failure_type _S_test(...);
@@ -2828,9 +2833,14 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   struct __result_of_memobj_deref_impl
   {
     template<typename _Fp, typename _Tp1>
-      static __result_of_success<decltype(
-      (*std::declval<_Tp1>()).*std::declval<_Fp>()
-      ), __invoke_memobj_deref> _S_test(int);
+      static auto _S_test(int) -> __result_of_success<
+        decltype( std::declval<_Tp1>().std_invoke_member_pointer( std::declval<_Fp>() ) ),
+        __invoke_memobj_deref>;
+
+    template<typename _Fp, typename _Tp1>
+      static auto _S_test(long) -> __result_of_success<
+        decltype( (*std::declval<_Tp1>()).*std::declval<_Fp>() ),
+        __invoke_memobj_deref>;
 
     template<typename, typename>
       static __failure_type _S_test(...);

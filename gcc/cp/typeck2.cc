@@ -2463,8 +2463,22 @@ build_x_arrow (location_t loc, tree expr, tsubst_flags_t complain)
   tree last_rval = NULL_TREE;
   vec<tree, va_gc> *types_memoized = NULL;
 
+  if (expr == error_mark_node)
+    return error_mark_node;
+
   if (type == error_mark_node)
     return error_mark_node;
+
+  /* Extension: allow '->' on std::chimeric_ptr<B1, B2, ...> without
+     requiring an overloaded operator->.  We simply leave EXPR as-is
+     here and let build_class_member_access_expr handle the actual
+     chimeric lookup when it sees the subsequent member name.
+
+     We only do this for non-template code; in templates we rely on
+     normal rules and will revisit after instantiation.  */
+  if (!processing_template_decl
+      && cp_is_chimera (type))
+    return expr;
 
   if (processing_template_decl)
     {

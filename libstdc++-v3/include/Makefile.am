@@ -211,6 +211,7 @@ bits_headers = \
 	${bits_srcdir}/basic_string.h \
 	${bits_srcdir}/basic_string.tcc \
 	${bits_srcdir}/charconv.h \
+	${bits_srcdir}/chimeric_ptr.h \
 	${bits_srcdir}/chrono.h \
 	${bits_srcdir}/chrono_io.h \
 	${bits_srcdir}/codecvt.h \

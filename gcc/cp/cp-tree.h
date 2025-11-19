@@ -8968,6 +8968,7 @@ extern tree cp_build_indirect_ref		(location_t, tree,
 						 ref_operator,
 						 tsubst_flags_t);
 extern tree cp_build_fold_indirect_ref		(tree);
+extern bool cp_is_chimera		(tree);
 extern tree build_array_ref			(location_t, tree, tree);
 extern tree cp_build_array_ref			(location_t, tree, tree,
 						 tsubst_flags_t);

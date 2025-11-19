@@ -1,0 +1,1543 @@
+<pre class='metadata'>
+Title: chimeric pointer
+H1: chimeric pointer
+Group: WG21
+Shortname: Pxxxx
+Revision: 5
+Status: D
+Date: 2026-01-30
+Editor: Thomas PK Healy (healy8tpk@vir8jacode.com -- Remove all 8's)
+Abstract: This paper proposes a new standard library pointer class type that allows `operator->` member access to be resolved against a list of specified interfaces. All of the features described in this paper have been implemented—*tested and working*—in a compiler up on **GodBolt**:<br>[https://godbolt.org/z/YETv6zdWj](https://godbolt.org/z/YETv6zdWj)
+Markup Shorthands: markdown on
+ED: https://wg21.link/Pxxxx
+</pre>
+
+<header>
+  <style>
+    body {
+      hyphens: none;
+      overflow-wrap: normal;
+    }
+  </style>
+</header>
+
+# Introduction
+
+We introduce a library template class `std::chimeric_ptr< Interfaces... >` representing a non-owning pointer-like wrapper to an object that is convertible to a pointer to each interface. Consider the following code sample:
+
+```c++
+#include <memory>    // chimeric_ptr
+
+struct Editor {
+    virtual void Edit(void) = 0;
+};
+
+struct Processor {
+    virtual void Process(void) = 0;
+};
+
+void EditAndProcess( std::chimeric_ptr<Editor,Processor> const p )
+{
+    p->Edit   ();
+    p->Process();
+}
+
+struct Emulator : Editor, Processor {
+    void Edit   (void) override {}
+    void Process(void) override {}
+};
+
+struct Simulator : Editor, Processor {
+    void Edit   (void) override {}
+    void Process(void) override {}
+};
+
+int main(void)
+{
+    Emulator  e;
+    EditAndProcess(&e);
+    Simulator s;
+    EditAndProcess(&s);
+}
+
+```
+
+**GodBolt** for above snippet: [https://godbolt.org/z/jqEbqY7o5](https://godbolt.org/z/jqEbqY7o5)
+
+In the above code snippet inside the function `EditAndProcess`, the member named `Edit` is looked up in the interface list `Interfaces...` from left to right, selecting the first interface where lookup succeeds, and the expression is treated *as if* written using a cast to that interface pointer, as though the function had originally been written as:
+
+```c++
+void EditAndProcess( std::chimeric_ptr<Editor, Processor> const p )
+{
+    static_cast<Editor   *>(p)->Edit   ();
+    static_cast<Processor*>(p)->Process();
+}
+```
+
+**GodBolt** for above snippet: [https://godbolt.org/z/z17f9vMTa](https://godbolt.org/z/z17f9vMTa)
+
+The convenience here is that the programmer does not need to indicate which interface contains which member, meaning that the code that makes use of the interfaces does not need to be revised when the interfaces are edited.
+
+# Motivation
+
+In graphical user interface frameworks and also in other large object-oriented codebases, it is common for concrete types to model multiple orthogonal abstract interfaces.
+
+Consider a function that needs to act on an object through two different interfaces. We can define a single base class that subsumes both interfaces, for example:
+
+```c++
+struct Editor {
+    virtual void Edit(void) = 0;
+};
+
+struct Processor {
+    virtual void Process(void) = 0;
+};
+
+struct EditorCumProcessor : Editor, Processor {};
+
+void EditAndProcess( EditorCumProcessor *const p )
+{
+    p->Edit   ();
+    p->Process();
+}
+
+struct Emulator : EditorCumProcessor  {
+    void Edit   (void) override {}
+    void Process(void) override {}
+};
+
+struct Simulator : EditorCumProcessor  {
+    void Edit   (void) override {}
+    void Process(void) override {}
+};
+```
+
+**GodBolt** for above snippet: [https://godbolt.org/z/c9KrMq43n](https://godbolt.org/z/c9KrMq43n)
+
+This is okay when dealing with just two interfaces, but it quickly balloons when dealing with multiple base classes, for example consider the following concrete class taken from the software development kit for a production microscope:
+
+```c++
+struct Vetrayor : virtual IMicroscope, virtual IUtility, virtual IDrift,
+                  virtual IIllumination, virtual IStage, virtual IEscape,
+                  virtual IObjective, virtual IDiagnostics, virtual IIris,
+                  virtual IPower, virtual IAsyncControl, virtual ICommsHandler {
+    . . .
+};
+```
+
+If we were to define a class for each combination of two interfaces, we would have 66 new classes as follows:
+
+```c++
+struct IAsyncControl_CommsHandler : virtual IAsyncControl, virtual ICommsHandler {};
+struct IAsyncControl_Diagnostics : virtual IAsyncControl, virtual IDiagnostics {};
+struct IAsyncControl_Drift : virtual IAsyncControl, virtual IDrift {};
+struct IAsyncControl_Escape : virtual IAsyncControl, virtual IEscape {};
+struct IAsyncControl_Illlumination : virtual IAsyncControl, virtual IIllumination {};
+struct IAsyncControl_Iris : virtual IAsyncControl, virtual IIris {};
+struct IAsyncControl_Microscope : virtual IAsyncControl, virtual IMicroscope {};
+struct IAsyncControl_Objective : virtual IAsyncControl, virtual IObjective {};
+struct IAsyncControl_Power : virtual IAsyncControl, virtual IPower {};
+struct IAsyncControl_Stage : virtual IAsyncControl, virtual IStage {};
+struct IAsyncControl_Utility : virtual IAsyncControl, virtual IUtility {};
+struct ICommsHandler_Diagnostics : virtual ICommsHandler, virtual IDiagnostics {};
+struct ICommsHandler_Drift : virtual ICommsHandler, virtual IDrift {};
+struct ICommsHandler_Escape : virtual ICommsHandler, virtual IEscape {};
+struct ICommsHandler_Illlumination : virtual ICommsHandler, virtual IIllumination {};
+struct ICommsHandler_Iris : virtual ICommsHandler, virtual IIris {};
+struct ICommsHandler_Microscope : virtual ICommsHandler, virtual IMicroscope {};
+struct ICommsHandler_Objective : virtual ICommsHandler, virtual IObjective {};
+struct ICommsHandler_Power : virtual ICommsHandler, virtual IPower {};
+struct ICommsHandler_Stage : virtual ICommsHandler, virtual IStage {};
+struct ICommsHandler_Utility : virtual ICommsHandler, virtual IUtility {};
+struct IDiagnostics_Drift : virtual IDiagnostics, virtual IDrift {};
+struct IDiagnostics_Escape : virtual IDiagnostics, virtual IEscape {};
+struct IDiagnostics_Illlumination : virtual IDiagnostics, virtual IIllumination {};
+struct IDiagnostics_Iris : virtual IDiagnostics, virtual IIris {};
+struct IDiagnostics_Microscope : virtual IDiagnostics, virtual IMicroscope {};
+struct IDiagnostics_Objective : virtual IDiagnostics, virtual IObjective {};
+struct IDiagnostics_Power : virtual IDiagnostics, virtual IPower {};
+struct IDiagnostics_Stage : virtual IDiagnostics, virtual IStage {};
+struct IDiagnostics_Utility : virtual IDiagnostics, virtual IUtility {};
+struct IDrift_Escape : virtual IDrift, virtual IEscape {};
+struct IDrift_Illlumination : virtual IDrift, virtual IIllumination {};
+struct IDrift_Iris : virtual IDrift, virtual IIris {};
+struct IDrift_Microscope : virtual IDrift, virtual IMicroscope {};
+struct IDrift_Objective : virtual IDrift, virtual IObjective {};
+struct IDrift_Power : virtual IDrift, virtual IPower {};
+struct IDrift_Stage : virtual IDrift, virtual IStage {};
+struct IDrift_Utility : virtual IDrift, virtual IUtility {};
+struct IEscape_Illlumination : virtual IEscape, virtual IIllumination {};
+struct IEscape_Iris : virtual IEscape, virtual IIris {};
+struct IEscape_Microscope : virtual IEscape, virtual IMicroscope {};
+struct IEscape_Objective : virtual IEscape, virtual IObjective {};
+struct IEscape_Power : virtual IEscape, virtual IPower {};
+struct IEscape_Stage : virtual IEscape, virtual IStage {};
+struct IEscape_Utility : virtual IEscape, virtual IUtility {};
+struct IIllumination_Iris : virtual IIllumination, virtual IIris {};
+struct IIllumination_Microscope : virtual IIllumination, virtual IMicroscope {};
+struct IIllumination_Objective : virtual IIllumination, virtual IObjective {};
+struct IIllumination_Power : virtual IIllumination, virtual IPower {};
+struct IIllumination_Stage : virtual IIllumination, virtual IStage {};
+struct IIllumination_Utility : virtual IIllumination, virtual IUtility {};
+struct IIris_Microscope : virtual IIris, virtual IMicroscope {};
+struct IIris_Objective : virtual IIris, virtual IObjective {};
+struct IIris_Power : virtual IIris, virtual IPower {};
+struct IIris_Stage : virtual IIris, virtual IStage {};
+struct IIris_Utility : virtual IIris, virtual IUtility {};
+struct IMicroscope_Objective : virtual IMicroscope, virtual IObjective {};
+struct IMicroscope_Power : virtual IMicroscope, virtual IPower {};
+struct IMicroscope_Stage : virtual IMicroscope, virtual IStage {};
+struct IMicroscope_Utility : virtual IMicroscope, virtual IUtility {};
+struct IObjective_Power : virtual IObjective, virtual IPower {};
+struct IObjective_Stage : virtual IObjective, virtual IStage {};
+struct IObjective_Utility : virtual IObjective, virtual IUtility {};
+struct IPower_Stage : virtual IPower, virtual IStage {};
+struct IPower_Utility : virtual IPower, virtual IUtility {};
+struct IStage_Utility : virtual IStage, virtual IUtility {};
+```
+
+Furthermore, if we were to define a class for each combination of three interfaces, we would have another 220 new classes:
+
+```c++
+struct IAsyncControl_ICommsHandler_IDiagnostics : virtual IAsyncControl, virtual ICommsHandler, virtual IDiagnostics {};
+struct IAsyncControl_ICommsHandler_IDrift : virtual IAsyncControl, virtual ICommsHandler, virtual IDrift {};
+struct IAsyncControl_ICommsHandler_IEscape : virtual IAsyncControl, virtual ICommsHandler, virtual IEscape {};
+struct IAsyncControl_ICommsHandler_IIllumination : virtual IAsyncControl, virtual ICommsHandler, virtual IIllumination {};
+struct IAsyncControl_ICommsHandler_IIris : virtual IAsyncControl, virtual ICommsHandler, virtual IIris {};
+struct IAsyncControl_ICommsHandler_IMicroscope : virtual IAsyncControl, virtual ICommsHandler, virtual IMicroscope {};
+struct IAsyncControl_ICommsHandler_IObjective : virtual IAsyncControl, virtual ICommsHandler, virtual IObjective {};
+struct IAsyncControl_ICommsHandler_IPower : virtual IAsyncControl, virtual ICommsHandler, virtual IPower {};
+struct IAsyncControl_ICommsHandler_IStage : virtual IAsyncControl, virtual ICommsHandler, virtual IStage {};
+struct IAsyncControl_ICommsHandler_IUtility : virtual IAsyncControl, virtual ICommsHandler, virtual IUtility {};
+struct IAsyncControl_IDiagnostics_IDrift : virtual IAsyncControl, virtual IDiagnostics, virtual IDrift {};
+struct IAsyncControl_IDiagnostics_IEscape : virtual IAsyncControl, virtual IDiagnostics, virtual IEscape {};
+struct IAsyncControl_IDiagnostics_IIllumination : virtual IAsyncControl, virtual IDiagnostics, virtual IIllumination {};
+struct IAsyncControl_IDiagnostics_IIris : virtual IAsyncControl, virtual IDiagnostics, virtual IIris {};
+struct IAsyncControl_IDiagnostics_IMicroscope : virtual IAsyncControl, virtual IDiagnostics, virtual IMicroscope {};
+struct IAsyncControl_IDiagnostics_IObjective : virtual IAsyncControl, virtual IDiagnostics, virtual IObjective {};
+struct IAsyncControl_IDiagnostics_IPower : virtual IAsyncControl, virtual IDiagnostics, virtual IPower {};
+struct IAsyncControl_IDiagnostics_IStage : virtual IAsyncControl, virtual IDiagnostics, virtual IStage {};
+struct IAsyncControl_IDiagnostics_IUtility : virtual IAsyncControl, virtual IDiagnostics, virtual IUtility {};
+struct IAsyncControl_IDrift_IEscape : virtual IAsyncControl, virtual IDrift, virtual IEscape {};
+struct IAsyncControl_IDrift_IIllumination : virtual IAsyncControl, virtual IDrift, virtual IIllumination {};
+struct IAsyncControl_IDrift_IIris : virtual IAsyncControl, virtual IDrift, virtual IIris {};
+struct IAsyncControl_IDrift_IMicroscope : virtual IAsyncControl, virtual IDrift, virtual IMicroscope {};
+struct IAsyncControl_IDrift_IObjective : virtual IAsyncControl, virtual IDrift, virtual IObjective {};
+struct IAsyncControl_IDrift_IPower : virtual IAsyncControl, virtual IDrift, virtual IPower {};
+struct IAsyncControl_IDrift_IStage : virtual IAsyncControl, virtual IDrift, virtual IStage {};
+struct IAsyncControl_IDrift_IUtility : virtual IAsyncControl, virtual IDrift, virtual IUtility {};
+struct IAsyncControl_IEscape_IIllumination : virtual IAsyncControl, virtual IEscape, virtual IIllumination {};
+struct IAsyncControl_IEscape_IIris : virtual IAsyncControl, virtual IEscape, virtual IIris {};
+struct IAsyncControl_IEscape_IMicroscope : virtual IAsyncControl, virtual IEscape, virtual IMicroscope {};
+struct IAsyncControl_IEscape_IObjective : virtual IAsyncControl, virtual IEscape, virtual IObjective {};
+struct IAsyncControl_IEscape_IPower : virtual IAsyncControl, virtual IEscape, virtual IPower {};
+struct IAsyncControl_IEscape_IStage : virtual IAsyncControl, virtual IEscape, virtual IStage {};
+struct IAsyncControl_IEscape_IUtility : virtual IAsyncControl, virtual IEscape, virtual IUtility {};
+struct IAsyncControl_IIllumination_IIris : virtual IAsyncControl, virtual IIllumination, virtual IIris {};
+struct IAsyncControl_IIllumination_IMicroscope : virtual IAsyncControl, virtual IIllumination, virtual IMicroscope {};
+struct IAsyncControl_IIllumination_IObjective : virtual IAsyncControl, virtual IIllumination, virtual IObjective {};
+struct IAsyncControl_IIllumination_IPower : virtual IAsyncControl, virtual IIllumination, virtual IPower {};
+struct IAsyncControl_IIllumination_IStage : virtual IAsyncControl, virtual IIllumination, virtual IStage {};
+struct IAsyncControl_IIllumination_IUtility : virtual IAsyncControl, virtual IIllumination, virtual IUtility {};
+struct IAsyncControl_IIris_IMicroscope : virtual IAsyncControl, virtual IIris, virtual IMicroscope {};
+struct IAsyncControl_IIris_IObjective : virtual IAsyncControl, virtual IIris, virtual IObjective {};
+struct IAsyncControl_IIris_IPower : virtual IAsyncControl, virtual IIris, virtual IPower {};
+struct IAsyncControl_IIris_IStage : virtual IAsyncControl, virtual IIris, virtual IStage {};
+struct IAsyncControl_IIris_IUtility : virtual IAsyncControl, virtual IIris, virtual IUtility {};
+struct IAsyncControl_IMicroscope_IObjective : virtual IAsyncControl, virtual IMicroscope, virtual IObjective {};
+struct IAsyncControl_IMicroscope_IPower : virtual IAsyncControl, virtual IMicroscope, virtual IPower {};
+struct IAsyncControl_IMicroscope_IStage : virtual IAsyncControl, virtual IMicroscope, virtual IStage {};
+struct IAsyncControl_IMicroscope_IUtility : virtual IAsyncControl, virtual IMicroscope, virtual IUtility {};
+struct IAsyncControl_IObjective_IPower : virtual IAsyncControl, virtual IObjective, virtual IPower {};
+struct IAsyncControl_IObjective_IStage : virtual IAsyncControl, virtual IObjective, virtual IStage {};
+struct IAsyncControl_IObjective_IUtility : virtual IAsyncControl, virtual IObjective, virtual IUtility {};
+struct IAsyncControl_IPower_IStage : virtual IAsyncControl, virtual IPower, virtual IStage {};
+struct IAsyncControl_IPower_IUtility : virtual IAsyncControl, virtual IPower, virtual IUtility {};
+struct IAsyncControl_IStage_IUtility : virtual IAsyncControl, virtual IStage, virtual IUtility {};
+struct ICommsHandler_IDiagnostics_IDrift : virtual ICommsHandler, virtual IDiagnostics, virtual IDrift {};
+struct ICommsHandler_IDiagnostics_IEscape : virtual ICommsHandler, virtual IDiagnostics, virtual IEscape {};
+struct ICommsHandler_IDiagnostics_IIllumination : virtual ICommsHandler, virtual IDiagnostics, virtual IIllumination {};
+struct ICommsHandler_IDiagnostics_IIris : virtual ICommsHandler, virtual IDiagnostics, virtual IIris {};
+struct ICommsHandler_IDiagnostics_IMicroscope : virtual ICommsHandler, virtual IDiagnostics, virtual IMicroscope {};
+struct ICommsHandler_IDiagnostics_IObjective : virtual ICommsHandler, virtual IDiagnostics, virtual IObjective {};
+struct ICommsHandler_IDiagnostics_IPower : virtual ICommsHandler, virtual IDiagnostics, virtual IPower {};
+struct ICommsHandler_IDiagnostics_IStage : virtual ICommsHandler, virtual IDiagnostics, virtual IStage {};
+struct ICommsHandler_IDiagnostics_IUtility : virtual ICommsHandler, virtual IDiagnostics, virtual IUtility {};
+struct ICommsHandler_IDrift_IEscape : virtual ICommsHandler, virtual IDrift, virtual IEscape {};
+struct ICommsHandler_IDrift_IIllumination : virtual ICommsHandler, virtual IDrift, virtual IIllumination {};
+struct ICommsHandler_IDrift_IIris : virtual ICommsHandler, virtual IDrift, virtual IIris {};
+struct ICommsHandler_IDrift_IMicroscope : virtual ICommsHandler, virtual IDrift, virtual IMicroscope {};
+struct ICommsHandler_IDrift_IObjective : virtual ICommsHandler, virtual IDrift, virtual IObjective {};
+struct ICommsHandler_IDrift_IPower : virtual ICommsHandler, virtual IDrift, virtual IPower {};
+struct ICommsHandler_IDrift_IStage : virtual ICommsHandler, virtual IDrift, virtual IStage {};
+struct ICommsHandler_IDrift_IUtility : virtual ICommsHandler, virtual IDrift, virtual IUtility {};
+struct ICommsHandler_IEscape_IIllumination : virtual ICommsHandler, virtual IEscape, virtual IIllumination {};
+struct ICommsHandler_IEscape_IIris : virtual ICommsHandler, virtual IEscape, virtual IIris {};
+struct ICommsHandler_IEscape_IMicroscope : virtual ICommsHandler, virtual IEscape, virtual IMicroscope {};
+struct ICommsHandler_IEscape_IObjective : virtual ICommsHandler, virtual IEscape, virtual IObjective {};
+struct ICommsHandler_IEscape_IPower : virtual ICommsHandler, virtual IEscape, virtual IPower {};
+struct ICommsHandler_IEscape_IStage : virtual ICommsHandler, virtual IEscape, virtual IStage {};
+struct ICommsHandler_IEscape_IUtility : virtual ICommsHandler, virtual IEscape, virtual IUtility {};
+struct ICommsHandler_IIllumination_IIris : virtual ICommsHandler, virtual IIllumination, virtual IIris {};
+struct ICommsHandler_IIllumination_IMicroscope : virtual ICommsHandler, virtual IIllumination, virtual IMicroscope {};
+struct ICommsHandler_IIllumination_IObjective : virtual ICommsHandler, virtual IIllumination, virtual IObjective {};
+struct ICommsHandler_IIllumination_IPower : virtual ICommsHandler, virtual IIllumination, virtual IPower {};
+struct ICommsHandler_IIllumination_IStage : virtual ICommsHandler, virtual IIllumination, virtual IStage {};
+struct ICommsHandler_IIllumination_IUtility : virtual ICommsHandler, virtual IIllumination, virtual IUtility {};
+struct ICommsHandler_IIris_IMicroscope : virtual ICommsHandler, virtual IIris, virtual IMicroscope {};
+struct ICommsHandler_IIris_IObjective : virtual ICommsHandler, virtual IIris, virtual IObjective {};
+struct ICommsHandler_IIris_IPower : virtual ICommsHandler, virtual IIris, virtual IPower {};
+struct ICommsHandler_IIris_IStage : virtual ICommsHandler, virtual IIris, virtual IStage {};
+struct ICommsHandler_IIris_IUtility : virtual ICommsHandler, virtual IIris, virtual IUtility {};
+struct ICommsHandler_IMicroscope_IObjective : virtual ICommsHandler, virtual IMicroscope, virtual IObjective {};
+struct ICommsHandler_IMicroscope_IPower : virtual ICommsHandler, virtual IMicroscope, virtual IPower {};
+struct ICommsHandler_IMicroscope_IStage : virtual ICommsHandler, virtual IMicroscope, virtual IStage {};
+struct ICommsHandler_IMicroscope_IUtility : virtual ICommsHandler, virtual IMicroscope, virtual IUtility {};
+struct ICommsHandler_IObjective_IPower : virtual ICommsHandler, virtual IObjective, virtual IPower {};
+struct ICommsHandler_IObjective_IStage : virtual ICommsHandler, virtual IObjective, virtual IStage {};
+struct ICommsHandler_IObjective_IUtility : virtual ICommsHandler, virtual IObjective, virtual IUtility {};
+struct ICommsHandler_IPower_IStage : virtual ICommsHandler, virtual IPower, virtual IStage {};
+struct ICommsHandler_IPower_IUtility : virtual ICommsHandler, virtual IPower, virtual IUtility {};
+struct ICommsHandler_IStage_IUtility : virtual ICommsHandler, virtual IStage, virtual IUtility {};
+struct IDiagnostics_IDrift_IEscape : virtual IDiagnostics, virtual IDrift, virtual IEscape {};
+struct IDiagnostics_IDrift_IIllumination : virtual IDiagnostics, virtual IDrift, virtual IIllumination {};
+struct IDiagnostics_IDrift_IIris : virtual IDiagnostics, virtual IDrift, virtual IIris {};
+struct IDiagnostics_IDrift_IMicroscope : virtual IDiagnostics, virtual IDrift, virtual IMicroscope {};
+struct IDiagnostics_IDrift_IObjective : virtual IDiagnostics, virtual IDrift, virtual IObjective {};
+struct IDiagnostics_IDrift_IPower : virtual IDiagnostics, virtual IDrift, virtual IPower {};
+struct IDiagnostics_IDrift_IStage : virtual IDiagnostics, virtual IDrift, virtual IStage {};
+struct IDiagnostics_IDrift_IUtility : virtual IDiagnostics, virtual IDrift, virtual IUtility {};
+struct IDiagnostics_IEscape_IIllumination : virtual IDiagnostics, virtual IEscape, virtual IIllumination {};
+struct IDiagnostics_IEscape_IIris : virtual IDiagnostics, virtual IEscape, virtual IIris {};
+struct IDiagnostics_IEscape_IMicroscope : virtual IDiagnostics, virtual IEscape, virtual IMicroscope {};
+struct IDiagnostics_IEscape_IObjective : virtual IDiagnostics, virtual IEscape, virtual IObjective {};
+struct IDiagnostics_IEscape_IPower : virtual IDiagnostics, virtual IEscape, virtual IPower {};
+struct IDiagnostics_IEscape_IStage : virtual IDiagnostics, virtual IEscape, virtual IStage {};
+struct IDiagnostics_IEscape_IUtility : virtual IDiagnostics, virtual IEscape, virtual IUtility {};
+struct IDiagnostics_IIllumination_IIris : virtual IDiagnostics, virtual IIllumination, virtual IIris {};
+struct IDiagnostics_IIllumination_IMicroscope : virtual IDiagnostics, virtual IIllumination, virtual IMicroscope {};
+struct IDiagnostics_IIllumination_IObjective : virtual IDiagnostics, virtual IIllumination, virtual IObjective {};
+struct IDiagnostics_IIllumination_IPower : virtual IDiagnostics, virtual IIllumination, virtual IPower {};
+struct IDiagnostics_IIllumination_IStage : virtual IDiagnostics, virtual IIllumination, virtual IStage {};
+struct IDiagnostics_IIllumination_IUtility : virtual IDiagnostics, virtual IIllumination, virtual IUtility {};
+struct IDiagnostics_IIris_IMicroscope : virtual IDiagnostics, virtual IIris, virtual IMicroscope {};
+struct IDiagnostics_IIris_IObjective : virtual IDiagnostics, virtual IIris, virtual IObjective {};
+struct IDiagnostics_IIris_IPower : virtual IDiagnostics, virtual IIris, virtual IPower {};
+struct IDiagnostics_IIris_IStage : virtual IDiagnostics, virtual IIris, virtual IStage {};
+struct IDiagnostics_IIris_IUtility : virtual IDiagnostics, virtual IIris, virtual IUtility {};
+struct IDiagnostics_IMicroscope_IObjective : virtual IDiagnostics, virtual IMicroscope, virtual IObjective {};
+struct IDiagnostics_IMicroscope_IPower : virtual IDiagnostics, virtual IMicroscope, virtual IPower {};
+struct IDiagnostics_IMicroscope_IStage : virtual IDiagnostics, virtual IMicroscope, virtual IStage {};
+struct IDiagnostics_IMicroscope_IUtility : virtual IDiagnostics, virtual IMicroscope, virtual IUtility {};
+struct IDiagnostics_IObjective_IPower : virtual IDiagnostics, virtual IObjective, virtual IPower {};
+struct IDiagnostics_IObjective_IStage : virtual IDiagnostics, virtual IObjective, virtual IStage {};
+struct IDiagnostics_IObjective_IUtility : virtual IDiagnostics, virtual IObjective, virtual IUtility {};
+struct IDiagnostics_IPower_IStage : virtual IDiagnostics, virtual IPower, virtual IStage {};
+struct IDiagnostics_IPower_IUtility : virtual IDiagnostics, virtual IPower, virtual IUtility {};
+struct IDiagnostics_IStage_IUtility : virtual IDiagnostics, virtual IStage, virtual IUtility {};
+struct IDrift_IEscape_IIllumination : virtual IDrift, virtual IEscape, virtual IIllumination {};
+struct IDrift_IEscape_IIris : virtual IDrift, virtual IEscape, virtual IIris {};
+struct IDrift_IEscape_IMicroscope : virtual IDrift, virtual IEscape, virtual IMicroscope {};
+struct IDrift_IEscape_IObjective : virtual IDrift, virtual IEscape, virtual IObjective {};
+struct IDrift_IEscape_IPower : virtual IDrift, virtual IEscape, virtual IPower {};
+struct IDrift_IEscape_IStage : virtual IDrift, virtual IEscape, virtual IStage {};
+struct IDrift_IEscape_IUtility : virtual IDrift, virtual IEscape, virtual IUtility {};
+struct IDrift_IIllumination_IIris : virtual IDrift, virtual IIllumination, virtual IIris {};
+struct IDrift_IIllumination_IMicroscope : virtual IDrift, virtual IIllumination, virtual IMicroscope {};
+struct IDrift_IIllumination_IObjective : virtual IDrift, virtual IIllumination, virtual IObjective {};
+struct IDrift_IIllumination_IPower : virtual IDrift, virtual IIllumination, virtual IPower {};
+struct IDrift_IIllumination_IStage : virtual IDrift, virtual IIllumination, virtual IStage {};
+struct IDrift_IIllumination_IUtility : virtual IDrift, virtual IIllumination, virtual IUtility {};
+struct IDrift_IIris_IMicroscope : virtual IDrift, virtual IIris, virtual IMicroscope {};
+struct IDrift_IIris_IObjective : virtual IDrift, virtual IIris, virtual IObjective {};
+struct IDrift_IIris_IPower : virtual IDrift, virtual IIris, virtual IPower {};
+struct IDrift_IIris_IStage : virtual IDrift, virtual IIris, virtual IStage {};
+struct IDrift_IIris_IUtility : virtual IDrift, virtual IIris, virtual IUtility {};
+struct IDrift_IMicroscope_IObjective : virtual IDrift, virtual IMicroscope, virtual IObjective {};
+struct IDrift_IMicroscope_IPower : virtual IDrift, virtual IMicroscope, virtual IPower {};
+struct IDrift_IMicroscope_IStage : virtual IDrift, virtual IMicroscope, virtual IStage {};
+struct IDrift_IMicroscope_IUtility : virtual IDrift, virtual IMicroscope, virtual IUtility {};
+struct IDrift_IObjective_IPower : virtual IDrift, virtual IObjective, virtual IPower {};
+struct IDrift_IObjective_IStage : virtual IDrift, virtual IObjective, virtual IStage {};
+struct IDrift_IObjective_IUtility : virtual IDrift, virtual IObjective, virtual IUtility {};
+struct IDrift_IPower_IStage : virtual IDrift, virtual IPower, virtual IStage {};
+struct IDrift_IPower_IUtility : virtual IDrift, virtual IPower, virtual IUtility {};
+struct IDrift_IStage_IUtility : virtual IDrift, virtual IStage, virtual IUtility {};
+struct IEscape_IIllumination_IIris : virtual IEscape, virtual IIllumination, virtual IIris {};
+struct IEscape_IIllumination_IMicroscope : virtual IEscape, virtual IIllumination, virtual IMicroscope {};
+struct IEscape_IIllumination_IObjective : virtual IEscape, virtual IIllumination, virtual IObjective {};
+struct IEscape_IIllumination_IPower : virtual IEscape, virtual IIllumination, virtual IPower {};
+struct IEscape_IIllumination_IStage : virtual IEscape, virtual IIllumination, virtual IStage {};
+struct IEscape_IIllumination_IUtility : virtual IEscape, virtual IIllumination, virtual IUtility {};
+struct IEscape_IIris_IMicroscope : virtual IEscape, virtual IIris, virtual IMicroscope {};
+struct IEscape_IIris_IObjective : virtual IEscape, virtual IIris, virtual IObjective {};
+struct IEscape_IIris_IPower : virtual IEscape, virtual IIris, virtual IPower {};
+struct IEscape_IIris_IStage : virtual IEscape, virtual IIris, virtual IStage {};
+struct IEscape_IIris_IUtility : virtual IEscape, virtual IIris, virtual IUtility {};
+struct IEscape_IMicroscope_IObjective : virtual IEscape, virtual IMicroscope, virtual IObjective {};
+struct IEscape_IMicroscope_IPower : virtual IEscape, virtual IMicroscope, virtual IPower {};
+struct IEscape_IMicroscope_IStage : virtual IEscape, virtual IMicroscope, virtual IStage {};
+struct IEscape_IMicroscope_IUtility : virtual IEscape, virtual IMicroscope, virtual IUtility {};
+struct IEscape_IObjective_IPower : virtual IEscape, virtual IObjective, virtual IPower {};
+struct IEscape_IObjective_IStage : virtual IEscape, virtual IObjective, virtual IStage {};
+struct IEscape_IObjective_IUtility : virtual IEscape, virtual IObjective, virtual IUtility {};
+struct IEscape_IPower_IStage : virtual IEscape, virtual IPower, virtual IStage {};
+struct IEscape_IPower_IUtility : virtual IEscape, virtual IPower, virtual IUtility {};
+struct IEscape_IStage_IUtility : virtual IEscape, virtual IStage, virtual IUtility {};
+struct IIllumination_IIris_IMicroscope : virtual IIllumination, virtual IIris, virtual IMicroscope {};
+struct IIllumination_IIris_IObjective : virtual IIllumination, virtual IIris, virtual IObjective {};
+struct IIllumination_IIris_IPower : virtual IIllumination, virtual IIris, virtual IPower {};
+struct IIllumination_IIris_IStage : virtual IIllumination, virtual IIris, virtual IStage {};
+struct IIllumination_IIris_IUtility : virtual IIllumination, virtual IIris, virtual IUtility {};
+struct IIllumination_IMicroscope_IObjective : virtual IIllumination, virtual IMicroscope, virtual IObjective {};
+struct IIllumination_IMicroscope_IPower : virtual IIllumination, virtual IMicroscope, virtual IPower {};
+struct IIllumination_IMicroscope_IStage : virtual IIllumination, virtual IMicroscope, virtual IStage {};
+struct IIllumination_IMicroscope_IUtility : virtual IIllumination, virtual IMicroscope, virtual IUtility {};
+struct IIllumination_IObjective_IPower : virtual IIllumination, virtual IObjective, virtual IPower {};
+struct IIllumination_IObjective_IStage : virtual IIllumination, virtual IObjective, virtual IStage {};
+struct IIllumination_IObjective_IUtility : virtual IIllumination, virtual IObjective, virtual IUtility {};
+struct IIllumination_IPower_IStage : virtual IIllumination, virtual IPower, virtual IStage {};
+struct IIllumination_IPower_IUtility : virtual IIllumination, virtual IPower, virtual IUtility {};
+struct IIllumination_IStage_IUtility : virtual IIllumination, virtual IStage, virtual IUtility {};
+struct IIris_IMicroscope_IObjective : virtual IIris, virtual IMicroscope, virtual IObjective {};
+struct IIris_IMicroscope_IPower : virtual IIris, virtual IMicroscope, virtual IPower {};
+struct IIris_IMicroscope_IStage : virtual IIris, virtual IMicroscope, virtual IStage {};
+struct IIris_IMicroscope_IUtility : virtual IIris, virtual IMicroscope, virtual IUtility {};
+struct IIris_IObjective_IPower : virtual IIris, virtual IObjective, virtual IPower {};
+struct IIris_IObjective_IStage : virtual IIris, virtual IObjective, virtual IStage {};
+struct IIris_IObjective_IUtility : virtual IIris, virtual IObjective, virtual IUtility {};
+struct IIris_IPower_IStage : virtual IIris, virtual IPower, virtual IStage {};
+struct IIris_IPower_IUtility : virtual IIris, virtual IPower, virtual IUtility {};
+struct IIris_IStage_IUtility : virtual IIris, virtual IStage, virtual IUtility {};
+struct IMicroscope_IObjective_IPower : virtual IMicroscope, virtual IObjective, virtual IPower {};
+struct IMicroscope_IObjective_IStage : virtual IMicroscope, virtual IObjective, virtual IStage {};
+struct IMicroscope_IObjective_IUtility : virtual IMicroscope, virtual IObjective, virtual IUtility {};
+struct IMicroscope_IPower_IStage : virtual IMicroscope, virtual IPower, virtual IStage {};
+struct IMicroscope_IPower_IUtility : virtual IMicroscope, virtual IPower, virtual IUtility {};
+struct IMicroscope_IStage_IUtility : virtual IMicroscope, virtual IStage, virtual IUtility {};
+struct IObjective_IPower_IStage : virtual IObjective, virtual IPower, virtual IStage {};
+struct IObjective_IPower_IUtility : virtual IObjective, virtual IPower, virtual IUtility {};
+struct IObjective_IStage_IUtility : virtual IObjective, virtual IStage, virtual IUtility {};
+struct IPower_IStage_IUtility : virtual IPower, virtual IStage, virtual IUtility {};
+```
+
+As you can see, this is a poor solution.
+
+# Alternatives
+
+## Solution 1 - Constrained Template
+
+Write the function as a template constrained on the required conversions:
+
+```c++
+template<class T>
+requires std::derived_from<T, Editor   > &&
+         std::derived_from<T, Processor>
+void EditAndProcess(T *const p)
+{
+    p->Edit   ();
+    p->Process();
+}
+```
+
+**GodBolt** for above snippet: [https://godbolt.org/z/98YczchPq](https://godbolt.org/z/98YczchPq)
+
+## Solution 2 - Multiple Parameters
+
+Pass more than one parameter (i.e. a pointer to each interface), all of which are obtained from the same object, for example:
+
+```c++
+void EditAndProcess(Editor *const pE, Processor *const pP)
+{
+    pE->Edit   ();
+    pP->Process();
+}
+
+int main(void)
+{
+    Emulator e;
+    EditAndProcess( &e, &e );
+    Simulator s;
+    EditAndProcess( &s, &s );
+}
+```
+
+**GodBolt** for above snippet: [https://godbolt.org/z/ParqrEhbs](https://godbolt.org/z/ParqrEhbs)
+
+## Solution 3 - `dynamic_cast`
+
+Write a function that takes a pointer to just one of the interfaces, and then use `dynamic_cast` to obtain pointers to the other interfaces:
+
+```c++
+void EditAndProcess(Editor *const pE)
+{
+    pE->Edit();
+    dynamic_cast<Processor*>(pE)->Process();
+}
+```
+
+**GodBolt** for above snippet: [https://godbolt.org/z/YdzhGhxzK](https://godbolt.org/z/YdzhGhxzK)
+
+## Solution 4 - Adapter
+
+Start off by defining an empty class that derives from both interfaces, and write a function that acts on this new empty class:
+
+```
+struct EditorCumProcessor : Editor, Processor {};
+
+void EditAndProcess(EditorCumProcessor &&ed)
+{
+    ed.Edit   ();
+    ed.Process();
+}
+```
+
+and then provide an adapter class, and use it as so:
+
+```
+template<class T>
+requires std::derived_from<T, Editor   > &&
+         std::derived_from<T, Processor>
+class EditorCumProcessorAdapter : public EditorCumProcessor {
+    T *p;
+public:
+    explicit EditorCumProcessorAdapter(T *const arg) : p(arg) {}
+    void Edit   (void) override { p->Edit   (); }
+    void Process(void) override { p->Process(); }
+};
+
+int main(void)
+{
+    Emulator e;
+    EditAndProcess(  EditorCumProcessorAdapter(&e)  );
+}
+```
+
+**GodBolt** for above snippet: [https://godbolt.org/z/a11dzfh9s](https://godbolt.org/z/a11dzfh9s)
+
+## Solution 5 - Improvise the ABI
+
+With in-depth knowledge of the compiler's ABI, it is possible to get behaviour similar to `chimeric_ptr` by composing a specialised v-table at runtime, as follows:
+
+
+```c++
+
+struct Editor {
+  virtual void Edit(void) = 0;
+};
+
+struct Processor {
+  virtual void Process(void) = 0;
+};
+
+struct Emulator : Editor, Processor {
+  void Edit   (void) override {}
+  void Process(void) override {}
+};
+
+struct Simulator : Editor, Processor {
+  void Edit   (void) override {}
+  void Process(void) override {}
+};
+
+struct EditorCumProcessor : virtual Editor, virtual Processor {};
+
+void EditAndProcess( EditorCumProcessor *const p )
+{
+  p->Edit   ();
+  p->Process();
+}
+
+template<typename Combined, typename... Ts>
+class MakeBeliever final {
+
+  std::intptr_t vtable[ 3u + sizeof...(Ts) ]{};  // all zero
+  std::intptr_t const *object = nullptr;
+
+public:
+
+  template<class T>
+  constexpr MakeBeliever(T &&arg) noexcept
+  {
+    using std::intptr_t;
+    intptr_t *const vptr = vtable + sizeof vtable / sizeof *vtable;
+
+    int i = 0;
+
+    auto const mylambda = [this,vptr,&arg,&i]<typename B>(void) -> void
+      {
+        // In the vtable, set the virtual base's offset
+        intptr_t &offset = vptr[ - 4 - i++ ];
+        auto *const pb = std::addressof(  static_cast<B&>(arg)  );
+        offset = (char*)pb - (char*)&this->object;
+      };
+
+    ( mylambda.template operator()<Ts>(), ... );
+
+    // Set the vptr inside the make-believe object
+    object = vptr;
+  }
+
+  constexpr operator Combined*(void) noexcept
+  {
+    return static_cast<Combined*>(  static_cast<void*>( &object )  );
+  }
+};
+
+int main(void)
+{
+  Emulator  e;
+  EditAndProcess( MakeBeliever<EditorCumProcessor, Editor, Processor>(e) );
+  Simulator s;
+  EditAndProcess( MakeBeliever<EditorCumProcessor, Editor, Processor>(s) );
+}
+```
+
+**GodBolt** for above snippet: [https://godbolt.org/z/axsGo1cxY](https://godbolt.org/z/axsGo1cxY)
+
+## Summary of Alternatives
+
+Here are some of the drawbacks to the above five solutions:
+- Templates can balloon code-size (including duplication of internal static variables)
+- A template function prevents having a container of function pointers, e.g.:
+	```c++
+std::vector< bool(*)(chimeric_ptr<wxControl,wxTextEntry>) > delegates;
+```
+- Passing the same object as multiple arguments adds complication to the call site
+- `dynamic_cast` will fail at runtime rather than at compile time, any may be too slow in performance-critical code -- furthermore some dynamic casts are ill-formed because of private or ambiguous bases
+- The definition of an adapter class must be edited whenever the interfaces are edited (e.g. methods must be renamed, or new methods added)
+- The ABI improvisation must be re-written for every compiler and may require disabling of optimisations
+
+This goal of this paper is to provide a fast (i.e. minimal CPU cycles) new feature that is very easily manageable, in that changes to client code are seldom required when changes are made to interfaces in 3rd party header files.
+
+# Interface Resolution
+
+`std::chimeric_ptr` is a template class which you provide with a list of interfaces as follows:
+
+```c++
+std::chimeric_ptr<Base1, Base2> p;   // starts off as nullptr
+```
+
+The constructor accepts a pointer to an object of type `T`, for example:
+```c++
+Emulator e;
+std::chimeric_ptr<Editor,Processor> p = &e;
+```
+
+There are 3 ways in which an interface can be gotten from `T`.
+
+First choice will be a user conversion.<br>
+Second choice will be an upcast.<br>
+Third choice will be a dynamic cast.
+
+## Method 1 - user conversion
+
+This conversion is possible where the class `T` provides `T::operator Interface&()`:
+
+```c++
+T var;
+var.operator Interface&();
+```
+
+**GodBolt** for above snippet: [https://godbolt.org/z/hW6616bEW](https://godbolt.org/z/hW6616bEW)
+
+Note that the above *GodBolt* is more complicated because it also allows for every combination of `const` and `volatile` as follows:
+
+```c++
+operator Interface &();
+operator Interface &() const;
+operator Interface &() volatile;
+operator Interface &() const volatile;
+operator Interface const&();
+operator Interface const&() const;
+operator Interface const&() volatile;
+operator Interface const&() const volatile;
+and so on . . .
+```
+
+This conversion will be disabled if the option `bases_only` is specified.
+
+## Method 2 - static_upcast
+
+A static upcast conversion is possible when the interface is an unambiguous public base class of `T` (or when the interface is the same type as `T`).
+
+```c++
+// Check if Derived inherits from Base,
+// and that the CV-qualifiers are compatible
+// for a conversion.
+template<class Derived, class Base>
+constexpr bool derived_fromCV =    is_base_of_v<Base, Derived>
+                                && is_convertible_v<Derived*, Base*>;
+
+template<class ToRef, class From>
+requires is_lvalue_reference_v<ToRef> && (!is_reference_v<From>)
+	   && derived_fromCV< From, remove_reference_t<ToRef> >
+[[nodiscard]] constexpr ToRef static_upcast(From &arg) noexcept
+{
+  // The whole point of this function is that
+  // it will never perform a downcast (even
+  // though 'static_cast' can perform downcasts
+  // which might result in undefined behaviour)
+  return static_cast<ToRef>(arg);
+}
+```
+
+**GodBolt** for above snippet: [https://godbolt.org/z/xKdvPYE7j](https://godbolt.org/z/xKdvPYE7j)
+
+It is not possible to disable this conversion.
+
+## Method 3 - dynamic_cast
+
+```c++
+dynamic_cast<Interface*>( pointer_to_T_object );
+```
+
+**GodBolt** for above snippet: [https://godbolt.org/z/GesMjMbnE](https://godbolt.org/z/GesMjMbnE)
+
+By default, `std::chimeric_ptr` will not perform a dynamic cast -- you must specify the option `allow_dynamic` in order to enable it. A dynamic cast will be possible at runtime if the type `T` is polymorphic and part of an object that inherits from `Interface`.
+
+# Member Resolution
+
+Consider the following code snippet:
+
+```c++
+class Base1 {
+private:
+    int Func(double) { return 0; }
+};
+
+class Base2 {
+public:
+    float Func(char) { return 0.2f; }
+};
+
+class Derived : public Base1, public Base2 {};
+
+int main(void)
+{
+    Derived d;
+    d.Func('a');    // ERROR: Ambiguous
+}
+```
+
+**GodBolt** for above snippet: [https://godbolt.org/z/G6c4KExTY](https://godbolt.org/z/G6c4KExTY)
+
+The above snippet fails to compile because of the ambiguity -- even though `Func` is private in `Base1`.
+
+By default when resolving members, `std::chimeric_ptr` searches for the member in the list of `Interfaces` from left to right, and the first match wins.
+
+## Method 1 - chimeric
+
+The default mode for member resolution is *Chimeric Mode*, where the first class in the `Interfaces` list with a matching member wins. The following code compiles and runs without error:
+
+```c++
+#include <memory>    // chimeric_ptr
+
+class Base1 {
+private:
+    int Func(double) { return 0; }
+};
+
+class Base2 {
+public:
+    int Func(void*) { return 7; }
+};
+
+class Derived : public Base1, public Base2 {};
+
+int main(void)
+{
+    Derived d;
+    std::chimeric_ptr<Base2, Base1> p(&d);
+    p->Func(nullptr);
+
+    // But this doesn't work:
+    //   p->Func(27.2);
+}
+```
+
+**GodBolt** for above snippet: [https://godbolt.org/z/x1hn7afGs](https://godbolt.org/z/x1hn7afGs)
+
+Note in the above code the order of the base classes in `std::chimeric_ptr<Base2, Base1>`. If we re-write this as `std::chimeric_ptr<Base1, Base2>`, it will fail to compile because `Base1::Func` is private, as in the following **GodBolt**: [https://godbolt.org/z/aPKcrx5n6](https://godbolt.org/z/aPKcrx5n6)
+
+## Method 2 - forbid ambiguity
+
+If you want to force a compiler error when member resolution is ambiguous, use the option `forbid_ambiguity` as follows:
+
+```c++
+   std::chimeric_ptr< std::forbid_ambiguity, Base1, Base2 >
+```
+
+For example:
+
+```c++
+#include <memory>    // chimeric_ptr
+
+struct Base1 {
+    int Func(double) { return 0; }
+};
+
+struct Base2 {
+    int Func(void*) { return 7; }
+};
+
+class Derived : public Base1, public Base2 {};
+
+int main(void)
+{
+    Derived d;
+    std::chimeric_ptr< std::forbid_ambiguity, Base1, Base2 > p(&d);
+    p->Func(56.8);  //  ERROR: 'Func' is ambiguous
+}
+```
+
+**GodBolt** for above snippet: [https://godbolt.org/z/v6rvofveo](https://godbolt.org/z/v6rvofveo)
+
+The above snippet fails to compile because `Func` is found in more than one interface.
+
+# Options
+
+## `std::allow_dynamic`
+
+```c++
+bool MyFunction( std::chimeric_ptr< std::allow_dynamic, Base1, Base2 > const p )
+{
+  return p->Twist() && p->Stretch();
+}
+```
+
+**GodBolt** for above snippet: [https://godbolt.org/z/h5vq57s15](https://godbolt.org/z/h5vq57s15)
+
+The option, `allow_dynamic`, allows the use of `dynamic_cast` at runtime to try obtain an interface from `T`.
+
+If you combine this option with `many_pointers`, the constructor will throw `bad_cast` if any of the dynamic casts will fail, because the `many_pointers` option causes the resolution of all interfaces to occur at construction.
+
+If you combine this option with `nothrow_resolve`, the constructor will throw `bad_cast` if any of the dynamic casts will fail, because the `nothrow_resolve` option causes the resolution of all interfaces to occur at construction.
+
+You cannot combine this option with the option `bases_only`.
+
+## `std::bases_only`
+
+```c++
+bool MyFunction( std::chimeric_ptr< std::bases_only, Base1, Base2 > const p )
+{
+  return p->Twist() && p->Stretch();
+}
+```
+
+**GodBolt** for above snippet: [https://godbolt.org/z/x88vW1a84](https://godbolt.org/z/x88vW1a84)
+
+The above *GodBolt* fails to compile because the option `bases_only` prevents the resolution of the interface `Base2`.
+
+The option, `bases_only`, ensures at compile-time that all interfaces will be obtained by using `static_upcast`.
+
+You cannot combine this option with the option `allow_dynamic`.
+
+## `std::forbid_ambiguity`
+
+```c++
+bool MyFunction( std::chimeric_ptr< std::forbid_ambiguity, Base1, Base2 > const p )
+{
+  return p->Twist() && p->Stretch();
+}
+```
+
+**GodBolt** for above snippet: [https://godbolt.org/z/cfnMeaKv9](https://godbolt.org/z/cfnMeaKv9)
+
+The option, `forbid_ambiguity`, affects member resolution at compile-time, and ensures at compile-time that a resolved member is only found in one interface.
+
+## `std::nothrow_construct`
+
+```c++
+void Func( std::chimeric_ptr< std::nothrow_construct, Base1, Base2 > const p )
+{
+  . . .
+}
+```
+
+**GodBolt** for above snippet: [https://godbolt.org/z/M86qjYGPq](https://godbolt.org/z/M86qjYGPq)
+
+This option will force a compiler error if there's the possibility that the constructor of `chimeric_ptr` will throw. The constructor can throw if either of the options `many_pointers` or `nothrow_resolve` is specified.
+
+The above *GodBolt* fails to compile because the option `nothrow_construct` prevents the resolution of the interface `Base1`, as the user conversion operator might throw.
+
+## `std::nothrow_resolve`
+
+```c++
+void Func( std::chimeric_ptr< std::nothrow_resolve, Base1, Base2 > const p )
+{
+  . . .
+}
+```
+
+**GodBolt** for above snippet: [https://godbolt.org/z/zn89oYMov](https://godbolt.org/z/zn89oYMov)
+
+This option will ensure that there is no possibility of an exception being thrown when an interface is resolved; this is ensured by testing all dynamic casts when the `chimeric_ptr` is constructed and by forcing a compiler error if any of the user conversions can throw.
+
+The above *GodBolt* fails to compile because the option `nothrow_resolve` prevents the resolution of the interface `Base2`, as the user conversion operator might throw.
+
+You cannot combine this option with `many_pointers`, because it's always implied with `many_pointers`.
+
+If you combine this option with `allow_dynamic`, the constructor will throw `bad_cast` if any of the dynamic casts will fail.
+
+# Member Function Pointers
+
+## `operator->*`
+
+It is possible to invoke a member function pointer on a `chimeric_ptr` as follows:
+
+```c++
+void EditAndProcess( std::chimeric_ptr< Processor, Editor> const p )
+{
+    constexpr auto pointer_to_member_function = &Editor::Edit;
+    (p->*pointer_to_member_function)();
+}
+```
+
+## `std::invoke`
+
+It is possible to invoke a member function pointer on a `chimeric_ptr` by using 'std::invoke' as follows:
+
+```c++
+void EditAndProcess( std::chimeric_ptr< Processor, Editor> const p )
+{
+    constexpr auto pointer_to_member_function = &Editor::Edit;
+    std::invoke( pointer_to_member_function, p );
+}
+```
+
+## `std::apply`
+
+It is possible to invoke a member function on a `chimeric_ptr` with a tuple as argument as follows:
+
+```c++
+void EditAndProcess( std::chimeric_ptr< Processor, Editor> const p )
+{
+    constexpr auto pointer_to_member_function = &Editor::Edit;
+    std::tuple< decltype(p)& > var = { p };
+    std::apply( pointer_to_member_function, var );
+}
+```
+
+**GodBolt** for above three snippets: [https://godbolt.org/z/zrG9fxzTP](https://godbolt.org/z/zrG9fxzTP)
+
+# Implementation
+
+## Compiler Support
+
+Compiler support is required to implement `std::chimeric_ptr`, as shown in the following patch to the GNU g++ compiler which intercepts `operator->` applied to a chimeric pointer:
+
+[https://github.com/healytpk/gcc-thomas-healy/commit/tag_chimeric_ptr](https://github.com/healytpk/gcc-thomas-healy/commit/tag_chimeric_ptr)
+
+## Class Definition
+
+Although compiler support is required to compensate for the lack of `operator->`, a possible implementation of the `std::chimeric_ptr` template class is as follows:
+
+```c++
+#include <cstddef>                  // nullptr_t, size_t
+#include <tuple>                    // get, tuple, tuple_element, tuple_size
+#include <type_traits>
+#include <utility>                  // declval, index_sequence, make_index_sequence, to_underlying
+
+namespace std {
+
+namespace chimeric_detail {
+
+  // Next three lines: Get class from pointer-to-member (can be function or variable)
+  template<typename T                > struct __member_ptr_class_S;
+  template<typename T, typename Class> struct __member_ptr_class_S< T Class::* > { typedef Class type; };
+  template<typename T                > requires is_member_pointer_v<T> using __member_ptr_class = typename __member_ptr_class_S<T>::type;
+
+  // Check if Derived inherits from Base,
+  // and that the CV-qualifiers are compatible
+  // for a conversion.
+  template<class Derived, class Base>
+  constexpr bool derived_fromCV = is_base_of_v<Base, Derived> && is_convertible_v<Derived*, Base*>;
+
+  template<class ToRef, class From>
+  requires is_lvalue_reference_v<ToRef> && (!is_reference_v<From>)
+           && derived_fromCV< From, remove_reference_t<ToRef> >
+  [[nodiscard]] constexpr ToRef static_upcast(From &arg) noexcept
+  {
+    // The whole point of this function is that
+    // it will never perform a downcast (even
+    // though 'static_cast' can perform downcasts
+    // which might result in undefined behaviour)
+    return static_cast<ToRef>(arg);
+  }
+
+  template<class ToRef, class From>
+  requires is_lvalue_reference_v<ToRef> && (!is_reference_v<From>)
+  consteval bool is_noexcept_user_conversion(void) noexcept
+  {
+    typedef remove_cvref_t    <ToRef> To  ;
+    typedef remove_reference_t<ToRef> ToCV;
+
+    if constexpr (requires(From &f) { f.operator ToCV&(); })  // Prefer exact match first (matches C++ "best viable" more closely)
+      return noexcept(declval<From&>().operator ToCV&());
+    else if constexpr (requires(From &f) { f.operator To&(); })
+      return noexcept(declval<From&>().operator To&());
+    else if constexpr (requires(From &f) { f.operator To const&(); } && is_convertible_v<To const*, ToCV*>)
+      return noexcept(declval<From&>().operator To const&());
+    else if constexpr (requires(From &f) { f.operator To volatile&(); } && is_convertible_v<To volatile*, ToCV*>)
+      return noexcept(declval<From&>().operator To volatile&());
+    else if constexpr (requires(From &f) { f.operator To const volatile&(); } && is_convertible_v<To const volatile*, ToCV*>)
+      return noexcept(declval<From&>().operator To const volatile&());
+    else
+      static_assert(false, "constraints on user_conversion should prevent this from being reached -- you have a bug");
+  }
+
+  template<class ToRef, class From>
+  requires   is_lvalue_reference_v<ToRef> &&
+           (!is_reference_v<From>) &&
+           (
+              requires { declval<From&>().operator remove_cvref_t<ToRef>               &(); } ||
+             (requires { declval<From&>().operator remove_cvref_t<ToRef> const         &(); } && is_convertible_v< remove_cvref_t<ToRef> const         *, remove_reference_t<ToRef>* >) ||
+             (requires { declval<From&>().operator remove_cvref_t<ToRef>       volatile&(); } && is_convertible_v< remove_cvref_t<ToRef>       volatile*, remove_reference_t<ToRef>* >) ||
+             (requires { declval<From&>().operator remove_cvref_t<ToRef> const volatile&(); } && is_convertible_v< remove_cvref_t<ToRef> const volatile*, remove_reference_t<ToRef>* >)
+           )
+  constexpr ToRef user_conversion(From &arg) noexcept( is_noexcept_user_conversion<ToRef,From>() )
+  {
+    typedef remove_cvref_t    <ToRef> To  ;
+    typedef remove_reference_t<ToRef> ToCV;
+
+    if constexpr (requires { arg.operator ToCV&(); })  // Prefer exact match first (matches C++ "best viable" more closely)
+      return arg.operator ToCV&();
+    else if constexpr (requires { arg.operator To&(); })
+      return arg.operator To&();
+    else if constexpr (requires { arg.operator To const&(); } && is_convertible_v<To const*, ToCV*>)
+      return arg.operator To const&();
+    else if constexpr (requires { arg.operator To volatile&(); } && is_convertible_v<To volatile*, ToCV*>)
+      return arg.operator To volatile&();
+    else if constexpr (requires { arg.operator To const volatile&(); } && is_convertible_v<To const volatile*, ToCV*>)
+      return arg.operator To const volatile&();
+    else
+      static_assert(false, "control should never reach here -- should be prevented by constraints -- you have a bug");
+  }
+
+  template <typename T>
+  concept option = requires { typename T::__tag_chimera_option; }; // || is_same_v< T, std::reuse_stdlib_type >;
+
+  // Canonicalise for duplicate checks but ignore const/volatile
+  template<class T, class... Us>
+  struct none_same_canon
+    : bool_constant< (!is_same_v< remove_cv_t<T>, remove_cv_t<Us> > && ...) > {};
+
+  template<class... Ts>
+  struct unique_canon : true_type {};
+
+  template<class T0, class... TRest>
+  struct unique_canon<T0, TRest...>
+    : bool_constant< none_same_canon<T0, TRest...>::value
+                     && unique_canon<TRest...>::value > {};
+
+  template<class... Ts>
+  struct has_no_options
+    : bool_constant< (!option<Ts> && ...) > {};
+
+  // Enforce: All option types must precede all interface types
+  template<class... Ts>
+  struct options_then_interfaces : true_type {};
+
+  template<class T0, class... TRest>
+  struct options_then_interfaces<T0, TRest...>
+    : bool_constant<
+      option<T0>
+      ? options_then_interfaces<TRest...>::value
+      : has_no_options<TRest...>::value > {};
+
+  // Convert parameter pack to tuple
+  template<class T, class Tuple>
+  struct tuple_prepend;
+  template<class T, class... Ts>
+  struct tuple_prepend< T, tuple<Ts...> >
+  { using type = tuple<T, Ts...>; };
+
+  // Filter interfaces out of parameter pack
+  template<class... InterfacesAndOptions>
+  struct filter_interfaces;
+  template<> struct filter_interfaces<> { using type = tuple<>; };
+  template<class I0, class... Rest>
+  struct filter_interfaces<I0, Rest...>
+  {
+    using tail = typename filter_interfaces<Rest...>::type;
+    using type = conditional_t<
+      option<I0>,
+      tail,
+      typename tuple_prepend<I0, tail>::type >;
+  };
+
+  // Filter options out of parameter pack
+  template<class... InterfacesAndOptions>
+  struct filter_options;
+  template<> struct filter_options<> { using type = tuple<>; };
+  template<class I0, class... Rest>
+  struct filter_options<I0, Rest...>
+  {
+    using tail = typename filter_options<Rest...>::type;
+    using type = conditional_t<
+      option<I0>,
+      typename tuple_prepend<I0, tail>::type,
+      tail>;
+  };
+
+  // Convert tuple into tuple of pointers
+  template<class Tuple>
+  struct tuple_pointerize;
+  template<class... Ts>
+  struct tuple_pointerize< tuple<Ts...> >
+  { using type = tuple<Ts*...>; };
+
+  template<class B, class Tuple>
+  struct tuple_contains_type : false_type {};
+  template<class B, class... Ts>
+  struct tuple_contains_type< B, tuple<Ts...> >
+    : bool_constant< (is_same_v<B, Ts> || ...) > {};
+
+  template<class B, class Tuple>
+  struct tuple_contains_type_derived_fromCV : false_type {};
+  template<class B, class... Ts>
+  struct tuple_contains_type_derived_fromCV< B, tuple<Ts...> >
+    : bool_constant< (derived_fromCV<Ts, B> || ...) > {};
+
+  // Option tuple must have no const/volatile
+  template<class Tuple>
+  struct tuple_all_uncv : false_type {};
+  template<class... Ts>
+  struct tuple_all_uncv< tuple<Ts...> >
+    : bool_constant< (is_same_v<Ts, remove_cv_t<Ts> > && ...) > {};
+
+  // For alphabetical order: option types define
+  //   typedef integral_constant<unsigned, N> __tag_chimera_option;
+  template<class T> struct option_key               : integral_constant< unsigned, T::__tag_chimera_option::value > {};
+//template<       > struct option_key<reuse_stdlib> : integral_constant< unsigned, 70u                            > {};
+
+  template<class... Ts>
+  struct is_option_pack_alphabetical : true_type {};
+
+  template<class T0, class T1, class... Ts>
+  struct is_option_pack_alphabetical<T0, T1, Ts...>
+    : bool_constant<
+        (option_key<T0>::value < option_key<T1>::value)
+        && is_option_pack_alphabetical<T1, Ts...>::value > {};
+
+  template<class Tuple>
+  struct is_option_tuple_alphabetical : false_type {};
+
+  template<class... Ts>
+  struct is_option_tuple_alphabetical< tuple<Ts...> >
+    : is_option_pack_alphabetical<Ts...> {};
+
+  template<class Want, class Tuple>
+  struct tuple_find_uncv;
+
+  template<class Want>
+  struct tuple_find_uncv<Want, tuple<>>
+  { using type = void; };
+
+  template<class Want, class T0, class... Ts>
+  struct tuple_find_uncv<Want, tuple<T0, Ts...>>
+  {
+    using type = conditional_t<
+      is_same_v<remove_cv_t<T0>, remove_cv_t<Want>>,
+      T0,
+      typename tuple_find_uncv<Want, tuple<Ts...>>::type>;
+  };
+
+  template<class Want, class Tuple>
+  using tuple_find_uncv_t = typename tuple_find_uncv<Want, Tuple>::type;
+
+  template<class I, class RhsTuple>
+  concept rhs_supplies_interface =
+    (!is_void_v<tuple_find_uncv_t<I, RhsTuple>>)
+    && is_convertible_v<tuple_find_uncv_t<I, RhsTuple>*, I*>;
+
+  template<class LhsTuple, class RhsTuple>
+  concept rhs_supplies_all =
+    []<class... Is>(type_identity<tuple<Is...>>) consteval
+    {
+      return (rhs_supplies_interface<Is, RhsTuple> && ...);
+    }(type_identity<LhsTuple>{});
+
+  // Index of T within tuple<Ts...>.
+  template<class T, class Tuple>
+  struct tuple_index;
+
+  template<class T, class... Ts>
+  struct tuple_index<T, tuple<T, Ts...>> : integral_constant<size_t, 0u> {};
+
+  template<class T, class U, class... Ts>
+  struct tuple_index<T, tuple<U, Ts...>>
+    : integral_constant<size_t, 1u + tuple_index<T, tuple<Ts...>>::value> {};
+
+} // namespace chimeric_detail
+
+struct allow_dynamic    { using __tag_chimera_option = integral_constant<unsigned, 10u>; };
+struct bases_only       { using __tag_chimera_option = integral_constant<unsigned, 20u>; };
+struct forbid_ambiguity { using __tag_chimera_option = integral_constant<unsigned, 30u>; };
+struct many_pointers    { using __tag_chimera_option = integral_constant<unsigned, 40u>; };
+struct nothrow_construct{ using __tag_chimera_option = integral_constant<unsigned, 50u>; };
+struct nothrow_resolve  { using __tag_chimera_option = integral_constant<unsigned, 60u>; };
+
+template<class... InterfacesAndOptions>
+class chimeric_ptr final {
+
+  typedef int __tag_chimera;
+
+  template<class...> friend class chimeric_ptr;
+
+  static_assert(sizeof...(InterfacesAndOptions) > 0u,
+                "std::chimeric_ptr : template parameter list cannot be empty");
+
+  static_assert((is_class_v<InterfacesAndOptions> && ...),
+                "std::chimeric_ptr : all template parameters must be class types (no pointers, no references)");
+
+  static_assert(chimeric_detail::unique_canon<InterfacesAndOptions...>::value,
+                "std::chimeric_ptr : duplicate template parameters are not permitted (after removing const/volatile)");
+
+  static_assert(chimeric_detail::options_then_interfaces<InterfacesAndOptions...>::value,
+                "std::chimeric_ptr : all options must precede all interfaces in template parameter list");
+
+  static_assert( !(is_specialization_of<InterfacesAndOptions,chimeric_ptr> || ...),
+                "std::chimeric_ptr : cannot be used as a template argument to itself");
+
+  typedef typename chimeric_detail::filter_interfaces<InterfacesAndOptions...>::type ChimericInterfacesTuple_t;
+  typedef typename chimeric_detail::filter_options   <InterfacesAndOptions...>::type ChimericOptionsTuple_t   ;
+
+  typedef typename chimeric_detail::tuple_pointerize<ChimericInterfacesTuple_t>::type ChimericInterfacePointersTuple_t;
+
+  static_assert( tuple_size_v<ChimericInterfacesTuple_t> > 0u,
+                "std::chimeric_ptr : must have at least one interface");
+
+  static constexpr auto __chimeric_interface_sequence = make_index_sequence< tuple_size_v<ChimericInterfacesTuple_t> >{};
+
+  static_assert(chimeric_detail::tuple_all_uncv<ChimericOptionsTuple_t>::value,
+                "std::chimeric_ptr : option types must not be const/volatile");
+
+  static_assert(chimeric_detail::is_option_tuple_alphabetical<ChimericOptionsTuple_t>::value,
+                "std::chimeric_ptr : options must be in alphabetical order");
+
+  static constexpr bool
+     opt_allow_dynamic     = chimeric_detail::tuple_contains_type<allow_dynamic    , ChimericOptionsTuple_t>::value
+    ,opt_bases_only        = chimeric_detail::tuple_contains_type<bases_only       , ChimericOptionsTuple_t>::value
+    ,opt_forbid_ambiguity  = chimeric_detail::tuple_contains_type<forbid_ambiguity , ChimericOptionsTuple_t>::value
+    ,opt_many_pointers     = chimeric_detail::tuple_contains_type<many_pointers    , ChimericOptionsTuple_t>::value
+    ,opt_nothrow_construct = chimeric_detail::tuple_contains_type<nothrow_construct, ChimericOptionsTuple_t>::value
+    ,opt_nothrow_resolve   = chimeric_detail::tuple_contains_type<nothrow_resolve  , ChimericOptionsTuple_t>::value
+  ;
+
+  static_assert(false == (opt_allow_dynamic && opt_bases_only),
+                "std::chimeric_ptr : options 'allow_dynamic' and 'bases_only' cannot be combined");
+
+  static_assert(false == (opt_many_pointers && opt_nothrow_resolve),
+                "std::chimeric_ptr : options 'many_pointers' and 'nothrow_resolve' cannot be combined, as the former implies the latter");
+
+  // Two-pointer representation.
+  struct alignas( 2u * sizeof(void*) ) __two_ptrs {
+    void const volatile *original_class_pointer;
+    void const volatile *(*funcptr_get_interface)(void const volatile *, size_t) noexcept(opt_nothrow_resolve);
+  };
+
+  conditional_t<opt_many_pointers,
+                ChimericInterfacePointersTuple_t,
+                __two_ptrs> __chimeric_addresses{}; // start off all nullptr's
+
+  enum class HowInterfaceGotten : int {  // negative number means it can throw
+    not_possible  =  0,
+    user_conversion_nothrow = +1,
+    user_conversion_throw   = -1,
+    static_upcast = +2,
+    dynamic = -3,
+  };
+
+  template<class T, class Interface>
+  static consteval HowInterfaceGotten HowToGet(void) noexcept
+  {
+    if constexpr ( !opt_bases_only && requires(T &t){ chimeric_detail::user_conversion<Interface&>(t); } )
+    {
+      return noexcept(chimeric_detail::user_conversion<Interface&>(declval<T&>()))
+             ?
+             HowInterfaceGotten::user_conversion_nothrow
+             :
+             HowInterfaceGotten::user_conversion_throw;
+    }
+    else if constexpr ( requires(T &t){ chimeric_detail::static_upcast<Interface&>(t); } )
+    {
+      return HowInterfaceGotten::static_upcast;
+    }
+    else if constexpr ( opt_allow_dynamic && is_polymorphic_v<T>
+                        && requires (T &t){ dynamic_cast<Interface&>(t); })
+    {
+      return HowInterfaceGotten::dynamic;
+    }
+    else
+    {
+      static_assert(false, "std::chimeric_ptr : cannot get interface from supplied object");
+    }
+  }
+
+  template<typename T, bool only_user_conversion = false>
+  static consteval bool AllNoexcept(void) noexcept
+  {
+    constexpr auto CanAnyThrow =
+      []<size_t... Is>( index_sequence<Is...> ) consteval noexcept -> bool
+        {
+          constexpr auto CanInterfaceThrow = []<typename Interface>(void) consteval noexcept -> bool
+            {
+              return only_user_conversion
+                     ?
+                     HowInterfaceGotten::user_conversion_throw == HowToGet<T,Interface>()
+                     :
+                     to_underlying( HowToGet<T,Interface>() ) < 0;
+            };
+
+          return ( CanInterfaceThrow.template operator()< tuple_element_t<Is, ChimericInterfacesTuple_t>  >() || ... );
+        };
+
+    return false == CanAnyThrow.template operator()<>( __chimeric_interface_sequence );
+  }
+
+  template<class Interface, bool test_run_for_dynamic_cast = false, class T>
+  static constexpr void const volatile *__get_one_interface(T *const p) noexcept( AllNoexcept<T>() )
+  {
+    if constexpr ( !opt_bases_only && requires { chimeric_detail::user_conversion<Interface&>(*p); } )
+    {
+      // constructor contains 'static_assert' for 'noexcept' violations
+      if constexpr ( test_run_for_dynamic_cast ) return nullptr;
+      else return static_cast<void const volatile *>(
+        __builtin_addressof( chimeric_detail::user_conversion<Interface&>(*p) )
+      );
+    }
+    else if constexpr ( requires { chimeric_detail::static_upcast<Interface&>(*p); } )
+    {
+      if constexpr ( test_run_for_dynamic_cast ) return nullptr;
+      else return static_cast<void const volatile *>(
+        __builtin_addressof( chimeric_detail::static_upcast<Interface&>(*p) )
+      );
+    }
+    else if constexpr ( opt_bases_only && requires { chimeric_detail::user_conversion<Interface&>(*p); } )
+    {
+      static_assert(false, "std::chimeric_ptr : cannot get interface because of option 'bases_only'");
+    }
+    else if constexpr ( opt_allow_dynamic )
+    {
+      if constexpr ( false == is_polymorphic_v<T> )
+      {
+        static_assert(false, "std::chimeric_ptr : cannot get interface because T is not polymorphic (dynamic allowed)");
+      }
+      else if constexpr ( false == requires { dynamic_cast<Interface&>(*p); } )
+      {
+        static_assert(false, "std::chimeric_ptr : cannot get interface because dynamic_cast is ill-formed");
+      }
+      else
+      {
+        return __builtin_addressof( dynamic_cast<Interface&>(*p) );  // might throw 'std::bad_cast'
+      }
+    }
+    else
+    {
+      static_assert(false, "std::chimeric_ptr : cannot get interface from supplied object (dynamic disallowed)");
+    }
+  }
+
+  template<class T>
+  static constexpr void const volatile *__resolve(void const volatile *const obj, size_t const idx)
+  noexcept( opt_nothrow_resolve || AllNoexcept<T,true /* means only user conversion */>() )
+  {
+    constexpr auto mylambda = []<size_t... Is>(void const volatile *const obj2, size_t const idx2, index_sequence<Is...>) constexpr
+      {
+        T *const p = const_cast<T*>( static_cast<T const volatile*>(obj2) );
+        void const volatile *out = nullptr;
+    
+        ( ( (idx2 == Is) && (out = __get_one_interface< tuple_element_t<Is, ChimericInterfacesTuple_t> >(p)) ) || ... );
+
+        __glibcxx_assert( nullptr != out );
+        return out;
+      };
+
+    return mylambda( obj, idx, __chimeric_interface_sequence );
+  }
+
+public:
+  constexpr chimeric_ptr(void) noexcept = default;
+  constexpr chimeric_ptr(nullptr_t) noexcept {}
+
+  constexpr chimeric_ptr(chimeric_ptr const& ) noexcept = default;
+  constexpr chimeric_ptr(chimeric_ptr      &&) noexcept = default;
+  constexpr chimeric_ptr &operator=(chimeric_ptr const&) noexcept = default;
+  constexpr chimeric_ptr &operator=(chimeric_ptr     &&) noexcept = default;
+  constexpr chimeric_ptr &operator=(nullptr_t) noexcept
+  {
+    __chimeric_addresses = {};
+    return *this;
+  }
+
+  template<class T>
+  requires is_class_v<T>  // "std::chimeric_ptr : constructor argument must be pointer to class"
+  /* implicit */ constexpr chimeric_ptr(T *const p) noexcept( (!opt_many_pointers && !opt_nothrow_resolve) || AllNoexcept<T>() )
+  {
+    static_assert( !opt_nothrow_construct || !opt_nothrow_resolve || AllNoexcept<T>(),
+                   "std::chimeric_ptr : options 'nothrow_construct' and ' nothrow_resolve' specified however some interface conversions can throw.");
+
+    if ( nullptr == p ) return;  // __chimeric_addresses is already initialised all nullptr's
+
+    if constexpr ( opt_many_pointers )
+    {
+      static_assert( !opt_nothrow_construct || AllNoexcept<T>(),
+                     "std::chimeric_ptr : option 'nothrow_construct' specified with 'many_pointers' however some interface conversions can throw.");
+
+      constexpr auto set_from = []<size_t... Is>(ChimericInterfacesTuple_t &tup, T *const p2, index_sequence<Is...>) constexpr
+        {
+          ( (get<Is>(tup) = __get_one_interface< tuple_element_t<Is, ChimericInterfacesTuple_t> >(p2)), ... );
+        };
+
+      set_from( __chimeric_addresses, p, __chimeric_interface_sequence );
+    }
+    else
+    {
+      static_assert( !opt_nothrow_resolve || AllNoexcept<T,true /* means only user conversion */>(),
+                     "std::chimeric_ptr : option 'nothrow_resolve' specified however some interface conversions can throw (try replace with 'many_pointers').");
+
+      __chimeric_addresses.original_class_pointer = static_cast<void const volatile *>(p);
+      __chimeric_addresses.funcptr_get_interface  = &__resolve<T>;
+      
+      if constexpr ( opt_nothrow_resolve )  // Try all the dynamic casts at construction (rather than at resolution)
+      {
+        constexpr auto f = []<size_t... Is>(T *const p2, index_sequence<Is...>) constexpr noexcept(false)
+          {
+            // The following line might throw as it tries all the dynamic_cast's
+            ( __get_one_interface< tuple_element_t<Is, ChimericInterfacesTuple_t>, true /* means dynamic test */ >(p2), ... );
+          };
+        
+        f( p, __chimeric_interface_sequence );
+      }
+    }
+  }
+
+  explicit constexpr operator bool(void) const noexcept
+  {
+    if constexpr ( opt_many_pointers )
+      return nullptr != get<0u>(__chimeric_addresses);
+    else
+      return nullptr != __chimeric_addresses.original_class_pointer;
+  }
+
+  constexpr bool operator!(void) const noexcept { return !static_cast<bool>(*this); }
+
+  friend constexpr bool operator==(chimeric_ptr const &p, nullptr_t) noexcept { return  !p; }
+  friend constexpr bool operator==(nullptr_t, chimeric_ptr const &p) noexcept { return  !p; }
+  friend constexpr bool operator!=(chimeric_ptr const &p, nullptr_t) noexcept { return !!p; }
+  friend constexpr bool operator!=(nullptr_t, chimeric_ptr const &p) noexcept { return !!p; }
+
+private:
+  template<class B, size_t... Is>
+  // see constraint below on operator B*  --  no point in duplicating it here
+  constexpr B *__operator_B_star( index_sequence<Is...> ) const // see 'noexcept' specifier on operator B*
+  {
+    B *p = nullptr;
+
+    constexpr auto mylambda = []<size_t I>( decltype(__chimeric_addresses) const &addrs ) constexpr noexcept -> B*
+      {
+        typedef tuple_element_t<I, ChimericInterfacesTuple_t> T;
+
+        if constexpr ( chimeric_detail::derived_fromCV< T, B > )  // false if CV qualifiers incompatible
+        {
+          if constexpr ( opt_many_pointers )
+          {
+            return get<I>(addrs);  // implict conversion from Derived* to Base*
+          }
+          else
+          {
+            void const volatile *const raw = addrs.funcptr_get_interface(addrs.original_class_pointer, I);
+            return const_cast<T*>( static_cast< T const volatile* >(raw) );  // implict conversion from Derived* to Base*
+          }
+        }
+        else return nullptr;
+      };
+
+    ( (p = mylambda.template operator()<Is>(__chimeric_addresses)) || ... );
+    __glibcxx_assert( nullptr != p );
+    return p;
+  }
+
+public:
+  template<class B>
+  requires chimeric_detail::tuple_contains_type_derived_fromCV<B, ChimericInterfacesTuple_t>::value
+  constexpr operator B*(void) const noexcept(opt_many_pointers || opt_nothrow_resolve)
+  {
+    __glibcxx_assert( *this );
+    return this->__operator_B_star<B>( __chimeric_interface_sequence );
+  }
+
+  template<typename MemPtr, typename... Params>
+  requires is_member_pointer_v<MemPtr>  // cannot be a reference
+  constexpr decltype(auto) std_invoke_member_pointer(MemPtr const mem, Params&&... args) const
+    noexcept( (opt_many_pointers || opt_nothrow_resolve) && noexcept( (declval< chimeric_detail::__member_ptr_class<MemPtr>* >()->*mem)( forward<Params>(args)... ) ) )
+  {
+    __glibcxx_assert( *this );
+    typedef chimeric_detail::__member_ptr_class<MemPtr> Class;
+    Class *const p = static_cast<Class*>( *this );  // won't throw if 'many_pointers' or 'nothrow_resolve'
+    __glibcxx_assert( nullptr != p );
+    return (p->*mem)( forward<Params>(args)... );
+  }
+
+  template<typename MemPtr>
+  requires is_member_pointer_v<MemPtr>  // cannot be a reference
+  constexpr decltype(auto) operator->*(MemPtr const mem) const
+  noexcept( is_member_function_pointer_v<MemPtr> || opt_many_pointers || opt_nothrow_resolve )
+  {
+    __glibcxx_assert( *this );
+    if constexpr ( is_member_function_pointer_v<MemPtr> )
+    {
+      /* In here we need to make a copy of the chimeric_ptr
+         because the current chimeric_ptr could be 'moved from'
+         before the member function is invoked. */
+      chimeric_ptr<InterfacesAndOptions...> const mycopy(*this);
+      return [mycopy /* capture by value */, mem]<typename... Params2>(Params2&&... args2)
+        noexcept( noexcept(mycopy.std_invoke_member_pointer( mem, forward<Params2>(args2)... )) )
+        -> decltype(auto)
+        {
+          return mycopy.std_invoke_member_pointer( mem, forward<Params2>(args2)... );
+        };
+    }
+    else /* member object */
+    {
+      typedef chimeric_detail::__member_ptr_class<MemPtr> Class;
+      Class *const p = static_cast<Class*>( *this );  // won't throw if 'many_pointers' or 'nothrow_resolve'
+      __glibcxx_assert( nullptr != p );
+      return p->*mem;
+    }
+  }
+};
+
+} // namespace std
+```
+
+# Design Considerations
+
+* `std::chimeric_ptr<Interfaces...>` is non-owning and does not manage lifetime.
+
+* In normal two-pointer mode, alignment is twice the pointer size in order to facilitate the use of `std::atomic_ref` (e.g. 16-byte alignment on x86_64 allows for the use of the cx16 instruction).
+
+* Construction is permitted from `T*` only if `T*` can provide each `Interfaces*...`.
+
+* In left to right order, all options must appear before all `Interfaces` without any duplicates. (Two classes are considered the same even if they have different cv-qualifiers).
+
+* `Options` must be specified in alphabetical order and cannot be CV-qualified.
+
+* `p->name` performs ordered lookup in `Interfaces...` and when found, binds as if by `static_cast<Interface*>(p)->name`.
+
+* The selection is by name presence, not by call viability; overload resolution is performed only within the selected interface.
+
+* Compile-time options can alter the behaviour of the chimeric pointer (e.g. allow `dynamic_cast` to find an interface).
+
+* The facility is intended to reduce API ballooning in interface-heavy code without forcing the use of templates, adapters, or ABI improvisation.
+
+# Impact on the Standard
+<p>
+This proposal introduces a single, header-only library extension to (<code>&lt;memory&gt;</code>), which requires a change to the core compiler, however no new keyword is added to the language. No pre-exisiting code is broken by this change.
+</p>
+
+# Acknowledgements
+
+For his insightful blog post, Arthur O'Dwyer [https://quuxplusone.github.io/blog/2022/12/01/chimeric-ptr/](https://quuxplusone.github.io/blog/2022/12/01/chimeric-ptr/)

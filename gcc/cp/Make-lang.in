@@ -96,6 +96,7 @@ CXX_C_OBJS = attribs.o \
 # Language-specific object files for C++ and Objective C++.
 CXX_AND_OBJCXX_OBJS = \
 	cp/call.o cp/class.o cp/constexpr.o cp/constraint.o \
+	cp/chimera.o \
 	cp/coroutines.o cp/cp-gimplify.o \
 	cp/classalloca.o \
 	cp/cp-objcp-common.o cp/cp-ubsan.o \

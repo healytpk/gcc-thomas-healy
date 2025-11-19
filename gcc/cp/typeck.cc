@@ -40,6 +40,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "attribs.h"
 #include "asan.h"
 #include "gimplify.h"
+#include "chimera.h"
 
 static tree cp_build_addr_expr_strict (tree, tsubst_flags_t);
 static tree cp_build_function_call (tree, tree, tsubst_flags_t);
@@ -3749,6 +3750,7 @@ finish_class_member_access_expr (cp_expr object, tree name, bool template_p,
 	  }
 	  if (member == NULL_TREE)
 	    {
+	      if ( tree const t = check_for_chimera(object,name,template_p,complain) ) return t;
 	      if (dependentish_scope_p (object_type))
 		/* Try again at instantiation time.  */
 		goto dependent;

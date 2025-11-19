@@ -68,12 +68,35 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 		  _Args&&... __args)
     { return (__invfwd<_Tp>(__t).*__f)(std::forward<_Args>(__args)...); }
 
-  template<typename _Res, typename _MemFun, typename _Tp, typename... _Args>
-    constexpr _Res
-    __invoke_impl(__invoke_memfun_deref, _MemFun&& __f, _Tp&& __t,
-		  _Args&&... __args)
+  template<typename _MemFun, typename _Tp, typename... _Args>
+    auto
+    __invoke_memfun_deref_try(int, _MemFun&& __f, _Tp&& __t, _Args&&... __args)
+      -> decltype( std::forward<_Tp>(__t).std_invoke_member_pointer(
+                     std::forward<_MemFun>(__f), std::forward<_Args>(__args)...) )
     {
-      return ((*std::forward<_Tp>(__t)).*__f)(std::forward<_Args>(__args)...);
+      return std::forward<_Tp>(__t).std_invoke_member_pointer(
+        std::forward<_MemFun>(__f), std::forward<_Args>(__args)...);
+    }
+
+  template<typename _MemFun, typename _Tp, typename... _Args>
+    auto
+    __invoke_memfun_deref_try(long, _MemFun&& __f, _Tp&& __t, _Args&&... __args)
+      -> decltype( ((*std::forward<_Tp>(__t)).*std::forward<_MemFun>(__f))
+                     (std::forward<_Args>(__args)...) )
+    {
+      return ((*std::forward<_Tp>(__t)).*std::forward<_MemFun>(__f))
+               (std::forward<_Args>(__args)...);
+    }
+
+  template<typename _Res, typename _MemFun, typename _Tp, typename... _Args>
+  constexpr _Res
+    __invoke_impl(__invoke_memfun_deref, _MemFun&& __f, _Tp&& __t, _Args&&... __args)
+    {
+      // prefer 'int', fall back to 'long'
+      return __invoke_memfun_deref_try(0,
+                                       std::forward<_MemFun>(__f),
+                                       std::forward<_Tp>(__t),
+                                       std::forward<_Args>(__args)...);
     }
 
   template<typename _Res, typename _MemPtr, typename _Tp>
@@ -81,10 +104,34 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     __invoke_impl(__invoke_memobj_ref, _MemPtr&& __f, _Tp&& __t)
     { return __invfwd<_Tp>(__t).*__f; }
 
-  template<typename _Res, typename _MemPtr, typename _Tp>
-    constexpr _Res
-    __invoke_impl(__invoke_memobj_deref, _MemPtr&& __f, _Tp&& __t)
-    { return (*std::forward<_Tp>(__t)).*__f; }
+  // Helper: preferred overload if (t->*f) is well-formed
+  template<typename _MemFun, typename _Tp>
+    auto
+    __invoke_memobj_deref_try(int, _MemFun&& __f, _Tp&& __t)
+      -> decltype( std::forward<_Tp>(__t)->*std::forward<_MemFun>(__f) )
+    {
+      return std::forward<_Tp>(__t)->*std::forward<_MemFun>(__f);
+    }
+
+  // Fallback overload if the above is ill-formed
+  template<typename _MemFun, typename _Tp>
+    auto
+    __invoke_memobj_deref_try(long, _MemFun&& __f, _Tp&& __t)
+      -> decltype( (*std::forward<_Tp>(__t)).*std::forward<_MemFun>(__f) )
+    {
+      return (*std::forward<_Tp>(__t)).*std::forward<_MemFun>(__f);
+    }
+
+  template<typename _Res, typename _MemFun, typename _Tp, typename... _Args>
+  constexpr _Res
+    __invoke_impl(__invoke_memobj_deref, _MemFun&& __f, _Tp&& __t, _Args&&... __args)
+    {
+      // int preferred, long fallback
+      return __invoke_memobj_deref_try(0,
+                                       std::forward<_MemFun>(__f),
+                                       std::forward<_Tp>(__t),
+                                       std::forward<_Args>(__args)...);
+    }
 
   /// Invoke a callable object.
   template<typename _Callable, typename... _Args>

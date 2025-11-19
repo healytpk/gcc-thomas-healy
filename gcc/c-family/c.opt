@@ -216,6 +216,10 @@ F
 Driver C ObjC C++ ObjC++ Joined Separate MissingArgError(missing path after %qs)
 -F <dir>	Add <dir> to the end of the main framework include path.
 
+fchimera-debug
+C++ ObjC++ Var(flag_chimera_debug) Init(0)
+Enable verbose internal diagnostics for std::chimeric_ptr.
+
 fgimple
 C Var(flag_gimple) Init(0)
 Enable parsing GIMPLE.

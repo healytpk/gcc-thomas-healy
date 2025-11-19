@@ -97,6 +97,10 @@
 #  include <bits/out_ptr.h>
 #endif
 
+#if __cplusplus >= 202302L
+#  include <bits/chimeric_ptr.h>
+#endif
+
 #if __cplusplus > 202302L
 #  include <bits/indirect.h>
 #endif
