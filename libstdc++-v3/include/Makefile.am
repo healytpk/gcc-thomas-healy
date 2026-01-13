@@ -235,6 +235,7 @@ bits_headers = \
 	${bits_srcdir}/indirect.h \
 	${bits_srcdir}/indirect_array.h \
 	${bits_srcdir}/ios_base.h \
+	${bits_srcdir}/is_specialization_of.h \
 	${bits_srcdir}/istream.tcc \
 	${bits_srcdir}/list.tcc \
 	${bits_srcdir}/locale_classes.h \

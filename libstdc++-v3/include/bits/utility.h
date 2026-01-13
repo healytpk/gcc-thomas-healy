@@ -45,6 +45,7 @@
 #ifdef __glibcxx_constant_wrapper // C++ >= 26
 #  include <bits/invoke.h>
 #endif
+#include <bits/is_specialization_of.h>
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {

@@ -12851,14 +12851,92 @@ cp_parser_trait (cp_parser* parser, const cp_trait* trait)
     {
       cp_parser_require (parser, CPP_COMMA, RT_COMMA);
 
-      {
-	type_id_in_expr_sentinel s (parser);
-	type2 = cp_parser_type_id (parser);
-      }
+      if (kind == CPTK_IS_SPECIALIZATION_OF)
+        {
+          const cp_token* token = cp_lexer_peek_token (parser->lexer);
 
-      if (type2 == error_mark_node)
-	return error_mark_node;
-    }
+          // Parse a (possibly qualified) template-name, e.g. std::array
+          cp_expr id = cp_parser_id_expression (parser,
+                                               /*template_keyword_p=*/false,
+                                               /*check_dependency_p=*/true,
+                                               /*template_p=*/nullptr,
+                                               /*declarator_p=*/false,
+                                               /*optional_p=*/false);
+
+          tree name = id.get_value ();
+          if (name == error_mark_node)
+            return error_mark_node;
+
+          // Reject template-ids like std::array<int,3>
+          if (TREE_CODE (name) == TEMPLATE_ID_EXPR)
+            {
+              error_at (token->location,
+                        "second argument to %<__is_specialization_of%> must be a template-name, not a template-id");
+              return error_mark_node;
+            }
+
+          // If parsing produced a type (e.g. tuple<int>), do not try to name-lookup it.
+          // This prevents cp_parser_lookup_name ICE.
+          if (TYPE_P (name))
+            {
+              error_at (token->location,
+	                    "second argument to %<__is_specialization_of%> must be a template-name, not a type-id");
+              return error_mark_node;
+            }
+
+          if (TREE_CODE (name) == TYPE_DECL)
+            {
+              // Allow the injected-class-name case to continue later (your existing workaround
+              // is after lookup), but reject other type decls like tuple<int>.
+              if (!DECL_SELF_REFERENCE_P (name))
+                {
+                  error_at (token->location,
+                            "second argument to %<__is_specialization_of%> must be a template-name, not a type-id");
+                  return error_mark_node;
+                }
+              // If it *is* the injected-class-name, fall through; you’ll resolve it via lookup.
+            }
+
+          // Resolve the name (like is_deducible does)
+          tree decl = NULL_TREE;
+
+          if (DECL_P (name))
+            decl = name;
+          else
+            decl = cp_parser_lookup_name_simple (parser, name, token->location);
+
+          if (decl == error_mark_node)
+            return error_mark_node;
+
+          // If NAME resolves to the injected-class-name (a TYPE_DECL), convert it to
+          // the corresponding template decl so __is_specialization_of(T, chimeric_ptr)
+          // works inside the class template definition.
+          if (TREE_CODE (decl) == TYPE_DECL && DECL_SELF_REFERENCE_P (decl))
+            {
+              tree ty = TREE_TYPE (decl);
+              tree tinfo = TYPE_TEMPLATE_INFO (ty);
+              if (tinfo)
+                decl = TI_TEMPLATE (tinfo);
+            }
+
+          // Accept class/alias templates and template template parms
+          if (TREE_CODE (decl) != TEMPLATE_DECL || !(DECL_TYPE_TEMPLATE_P (decl) || DECL_TEMPLATE_TEMPLATE_PARM_P (decl)))
+            {
+              error_at (token->location,
+                        "second argument to %<__is_specialization_of%> must name a class/alias template (or a template template parameter)");
+              return error_mark_node;
+            }
+
+          type2 = decl;
+        }
+    else
+      {
+        type_id_in_expr_sentinel s (parser);
+        type2 = cp_parser_type_id (parser);
+        if (type2 == error_mark_node)
+          return error_mark_node;
+      }
+  }
   else if (variadic)
     {
       auto_vec<tree, 4> trailing;

@@ -3344,6 +3344,8 @@ diagnose_trait_expr (location_t loc, tree expr, tree args)
     case CPTK_IS_SCOPED_ENUM:
       inform (decl_loc, "%qT is not a scoped enum", t1);
       break;
+    case CPTK_IS_SPECIALIZATION_OF:
+      break;
     case CPTK_IS_STD_LAYOUT:
       inform (decl_loc, "%qT is not a standard layout type", t1);
       break;

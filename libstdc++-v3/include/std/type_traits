@@ -38,6 +38,7 @@
 #else
 
 #include <bits/c++config.h>
+#include <bits/is_specialization_of.h>
 
 #define __glibcxx_want_bool_constant
 #define __glibcxx_want_bounded_array_traits

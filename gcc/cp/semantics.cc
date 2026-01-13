@@ -14209,6 +14209,38 @@ referenceable_type_p (const_tree type)
 	      && type_memfn_rqual (type) == REF_QUAL_NONE));
 }
 
+static bool
+trait_is_specialization_of (tree type, tree want_tmpl)
+{
+  if (!type || type == error_mark_node || !want_tmpl || want_tmpl == error_mark_node)
+    return false;
+
+  type = non_reference(type);
+  type = TYPE_MAIN_VARIANT(type);
+
+  if (!MAYBE_CLASS_TYPE_P(type))
+    return false;
+
+  if (dependent_type_p(type) || uses_template_parms(type))
+    return false; // let caller build dependent TRAIT_EXPR instead
+
+  tree tinfo = TYPE_TEMPLATE_INFO(type);
+  if (!tinfo)
+    return false;
+
+  tree used_tmpl = TI_TEMPLATE(tinfo);
+  if (!used_tmpl || TREE_CODE(used_tmpl) != TEMPLATE_DECL)
+    return false;
+
+  // Normalize partial specializations to primary:
+  used_tmpl = most_general_template(used_tmpl);
+
+  if (TREE_CODE(want_tmpl) == TEMPLATE_DECL && !DECL_TEMPLATE_TEMPLATE_PARM_P(want_tmpl))
+    want_tmpl = most_general_template(want_tmpl);
+
+  return used_tmpl == want_tmpl;
+}
+
 /* Actually evaluates the trait.  */
 
 static bool
@@ -14404,6 +14436,9 @@ trait_expr_value (cp_trait_kind kind, tree type1, tree type2)
 
     case CPTK_IS_SCOPED_ENUM:
       return SCOPED_ENUM_P (type1);
+
+    case CPTK_IS_SPECIALIZATION_OF:
+      return trait_is_specialization_of(type1, type2);
 
     case CPTK_IS_STD_LAYOUT:
       return std_layout_type_p (type1);
@@ -14748,6 +14783,16 @@ finish_trait_expr (location_t loc, cp_trait_kind kind, tree type1, tree type2,
       if (!DECL_TYPE_TEMPLATE_P (type1))
 	{
 	  error ("%qD is not a class or alias template", type1);
+	  return error_mark_node;
+	}
+      break;
+
+    case CPTK_IS_SPECIALIZATION_OF:
+      /* type1 is a type-id; type2 is a template decl (class/alias or template parm).  */
+      if (type2 == NULL_TREE || TREE_CODE (type2) != TEMPLATE_DECL || !(DECL_TYPE_TEMPLATE_P (type2) || DECL_TEMPLATE_TEMPLATE_PARM_P (type2)))
+	{
+	  error_at (loc,
+	            "second argument to %<__is_specialization_of%> must name a class/alias template (or a template template parameter)");
 	  return error_mark_node;
 	}
       break;

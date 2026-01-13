@@ -164,6 +164,9 @@
 #if !__has_builtin (__is_scoped_enum)
 # error "__has_builtin (__is_scoped_enum) failed"
 #endif
+#if !__has_builtin (__is_specialization_of)
+# error "__has_builtin (__is_specialization_of) failed"
+#endif
 #if !__has_builtin (__is_standard_layout)
 # error "__has_builtin (__is_standard_layout) failed"
 #endif

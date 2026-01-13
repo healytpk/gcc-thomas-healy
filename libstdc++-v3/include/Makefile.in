@@ -591,6 +591,7 @@ bits_freestanding = \
 @GLIBCXX_HOSTED_TRUE@	${bits_srcdir}/indirect.h \
 @GLIBCXX_HOSTED_TRUE@	${bits_srcdir}/indirect_array.h \
 @GLIBCXX_HOSTED_TRUE@	${bits_srcdir}/ios_base.h \
+@GLIBCXX_HOSTED_TRUE@	${bits_srcdir}/is_specialization_of.h \
 @GLIBCXX_HOSTED_TRUE@	${bits_srcdir}/istream.tcc \
 @GLIBCXX_HOSTED_TRUE@	${bits_srcdir}/list.tcc \
 @GLIBCXX_HOSTED_TRUE@	${bits_srcdir}/locale_classes.h \
