@@ -8528,6 +8528,7 @@ extern void finish_range_for_decl		(tree, tree, tree);
 extern tree begin_template_for_scope		(tree *);
 extern tree finish_break_stmt			(void);
 extern tree finish_continue_stmt		(void);
+extern tree finish_return_if_stmt		(location_t, tree, bool, enum tree_code, location_t);
 extern tree begin_switch_stmt			(void);
 extern void finish_switch_cond			(tree, tree);
 extern void finish_switch_stmt			(tree);

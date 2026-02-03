@@ -1663,6 +1663,224 @@ finish_return_stmt (tree expr)
   return r;
 }
 
+static tree
+build_return_slot_destroy (location_t loc, tree obj)
+{
+  (void)loc;
+  tree type = TREE_TYPE (obj);
+  if (type == error_mark_node)
+    return error_mark_node;
+
+  /* If it’s a class type with a non-trivial destructor, emit a dtor call.  */
+  if (CLASS_TYPE_P (type) && TYPE_HAS_NONTRIVIAL_DESTRUCTOR (type))
+    {
+      vec<tree, va_gc> *args = NULL;
+      tree binfo = TYPE_BINFO (type);
+      return build_special_member_call (obj, complete_dtor_identifier,
+                                        &args, binfo,
+                                        LOOKUP_NORMAL,
+                                        tf_warning_or_error);
+    }
+
+  return build_trivial_dtor_call (obj);
+}
+
+static tree
+finish_return_if_stmt_in_return_slot (location_t loc, tree expr)
+{
+  location_t saved_loc = input_location;
+  input_location = loc;
+
+  tree compound = begin_compound_stmt (BCS_NORMAL);
+
+  auto bail_out = [&](void) -> tree
+    {
+      finish_compound_stmt (compound);
+      input_location = saved_loc;
+      return error_mark_node;
+    };
+
+  tree result = DECL_RESULT (current_function_decl);
+
+  /* 1) Construct directly into the return slot.  */
+  tree init = cp_build_modify_expr (loc, result, INIT_EXPR, expr, tf_warning_or_error);
+  if (init == error_mark_node) return bail_out();
+  add_stmt (init);
+
+  /* ok = false; */
+  tree ok_decl = build_decl (loc, VAR_DECL, get_identifier ("__return_if_ok"),
+                             boolean_type_node);
+  DECL_ARTIFICIAL (ok_decl) = 1;
+  DECL_IGNORED_P (ok_decl) = 1;
+  DECL_CONTEXT (ok_decl) = current_function_decl;
+  ok_decl = pushdecl (ok_decl);
+  cp_finish_decl (ok_decl, boolean_false_node, /*init_in_decl=*/false,
+                  NULL_TREE, 0);
+  if (TREE_TYPE (ok_decl) == error_mark_node) return bail_out();
+  DECL_SEEN_IN_BIND_EXPR_P (ok_decl) = 1;
+  add_stmt (build_stmt (loc, DECL_EXPR, ok_decl));
+
+  /* TRY { if (bool(result)) { ok=true; return result; } }
+     FINALLY { if (!ok) destroy(result); } */
+
+  tree try_list = push_stmt_list ();
+
+  tree fwd_type = cp_build_reference_type (TREE_TYPE (result), /*rval=*/true);
+  if (fwd_type == error_mark_node) { pop_stmt_list (try_list); return bail_out(); }
+
+  tree fwd_expr = build_static_cast (loc, fwd_type, result, tf_warning_or_error);
+  if (fwd_expr == error_mark_node) { pop_stmt_list (try_list); return bail_out(); }
+
+  tree cond = build_static_cast (loc, boolean_type_node, fwd_expr, tf_warning_or_error);
+  if (cond == error_mark_node) { pop_stmt_list (try_list); return bail_out(); }
+
+  tree if_stmt = begin_if_stmt ();
+  finish_if_stmt_cond (cond, if_stmt);
+
+  add_stmt (build2 (MODIFY_EXPR, boolean_type_node, ok_decl, boolean_true_node));
+
+  /* Return: value is already in RESULT_DECL (return slot).  */
+  tree r = build_stmt (loc, RETURN_EXPR, NULL_TREE);
+  suppress_warning (r, OPT_Wreturn_type);
+  add_stmt (r);
+
+  finish_then_clause (if_stmt);
+  finish_if_stmt (if_stmt);
+
+  tree try_part = pop_stmt_list (try_list);
+
+  tree fin_list = push_stmt_list ();
+
+  tree not_ok = build_x_unary_op (loc, TRUTH_NOT_EXPR, ok_decl,
+                                 NULL_TREE, tf_warning_or_error);
+  if (not_ok == error_mark_node) { pop_stmt_list (fin_list); return bail_out(); }
+
+  tree fin_if = begin_if_stmt ();
+  finish_if_stmt_cond (not_ok, fin_if);
+
+  /* IMPORTANT: let GCC build the right destructor/cleanup expression.  */
+  tree destroy = build_return_slot_destroy (loc, result);
+  if (destroy == error_mark_node) { pop_stmt_list (fin_list); return bail_out(); }
+  add_stmt (destroy);
+
+  finish_then_clause (fin_if);
+  finish_if_stmt (fin_if);
+
+  tree fin_part = pop_stmt_list (fin_list);
+
+  add_stmt (build2 (TRY_FINALLY_EXPR, void_type_node, try_part, fin_part));
+
+  finish_compound_stmt (compound);
+  input_location = saved_loc;
+  return compound;
+}
+
+tree
+finish_return_if_stmt (location_t loc,
+                       tree expr,
+                       bool has_unop,
+                       enum tree_code unop_code,
+                       location_t unop_loc)
+{
+  if (expr == NULL_TREE || expr == error_mark_node)
+    return error_mark_node;
+
+  if (!has_unop && !processing_template_decl)
+    {
+	  /*  If we have "return if" without a unary operator, we     *
+	   *  want to be able to return an immovable-and-uncopiable   *
+	   *  type by value (i.e. a PRvalue), and therefore we need   *
+	   *  to manually manipulate the return slot. We do so inside *
+	   *  the function:                                           *
+	   *                                                          *
+	   *       finish_return_if_stmt_in_return_slot               *
+	   *                                                          *
+	   * We use the function 'aggregate_value_p' to determine if  *
+	   * the address of the return slot was passed to us.         */
+	   
+      tree ret_type = TREE_TYPE (TREE_TYPE (current_function_decl));
+
+      bool sret_p = aggregate_value_p (ret_type, current_function_decl);
+
+      /* Only PRvalues and exact type match */
+      bool prvalue_p = obvalue_p (expr);
+      bool exact_p = (TREE_TYPE (expr) != NULL_TREE
+                      && same_type_ignoring_top_level_qualifiers_p (ret_type, TREE_TYPE (expr)));
+
+      if (sret_p && prvalue_p && exact_p)
+        return finish_return_if_stmt_in_return_slot (loc, expr);
+    }
+
+  location_t saved_loc = input_location;
+  input_location = loc;
+
+  tree compound = begin_compound_stmt (BCS_NORMAL);
+
+  auto bail_out = [&](void) -> tree
+    {
+      finish_compound_stmt (compound);
+      input_location = saved_loc;
+      return error_mark_node;
+    };
+
+  /* decltype(auto) x = expr;  */
+  tree x_type = make_decltype_auto ();
+  tree x_name = get_identifier ("__return_if_x");
+  tree x_decl = build_decl (loc, VAR_DECL, x_name, x_type);
+
+  DECL_ARTIFICIAL (x_decl) = 1;
+  DECL_IGNORED_P (x_decl) = 1;
+  TREE_USED (x_decl) = 1;
+  DECL_CONTEXT (x_decl) = current_function_decl;
+
+  x_decl = pushdecl (x_decl);
+
+  /* Deduce decltype(auto) and initialize.  */
+  cp_finish_decl (x_decl, expr, /*init_in_decl=*/false, NULL_TREE, 0);
+  if (TREE_TYPE (x_decl) == error_mark_node) return bail_out();
+
+  /* Prevent gimplify_var_or_parm_decl ICE.  */
+  DECL_SEEN_IN_BIND_EXPR_P (x_decl) = 1;
+  add_stmt (build_stmt (loc, DECL_EXPR, x_decl));
+
+  /* fwd_type = decltype(x)&& (with reference collapsing) */
+  tree fwd_type = cp_build_reference_type (TREE_TYPE (x_decl), /*rval=*/true);
+  if (fwd_type == error_mark_node) return bail_out();
+
+  /* cond = static_cast<bool>( static_cast<fwd_type>(x) ) */
+  tree fwd_for_cond = build_static_cast (loc, fwd_type, x_decl, tf_warning_or_error);
+  if (fwd_for_cond == error_mark_node) return bail_out();
+
+  tree cond = build_static_cast (loc, boolean_type_node, fwd_for_cond, tf_warning_or_error);
+  if (cond == error_mark_node) return bail_out();
+
+  tree if_stmt = begin_if_stmt ();
+  finish_if_stmt_cond (cond, if_stmt);
+
+  /* ret_base = static_cast<fwd_type>(x) */
+  tree ret_base = build_static_cast (loc, fwd_type, x_decl, tf_warning_or_error);
+  if (ret_base == error_mark_node) return bail_out();
+
+  tree ret_expr = ret_base;
+
+  if (has_unop)
+    {
+      location_t op_loc = (unop_loc != UNKNOWN_LOCATION) ? unop_loc : loc;
+      ret_expr = build_x_unary_op (op_loc, unop_code, ret_expr,
+                                   /*lookups=*/NULL_TREE,
+                                   tf_warning_or_error);
+      if (ret_expr == error_mark_node) return bail_out();
+    }
+
+  finish_return_stmt (ret_expr);
+  finish_then_clause (if_stmt);
+  finish_if_stmt (if_stmt);
+
+  finish_compound_stmt (compound);
+  input_location = saved_loc;
+  return compound;
+}
+
 /* Begin the scope of a for-statement or a range-for-statement.
    Both the returned trees are to be used in a call to
    begin_for_stmt or begin_range_for_stmt.  */

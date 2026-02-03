@@ -17126,6 +17126,10 @@ cp_parser_jump_statement (cp_parser* parser, tree &std_attrs)
     case RID_RETURN:
       {
 	tree expr;
+	bool return_if_p = false;
+	bool return_if_has_unop = false;
+	enum tree_code return_if_unop = ERROR_MARK;
+	location_t return_if_unop_loc = UNKNOWN_LOCATION;
 
 	if (0 == strncmp (IDENTIFIER_POINTER (DECL_NAME (current_function_decl)), "__core_", 7))
 	  {
@@ -17141,6 +17145,72 @@ cp_parser_jump_statement (cp_parser* parser, tree &std_attrs)
 	    cp_lexer_set_source_position (parser->lexer);
 	    maybe_warn_cpp0x (CPP0X_INITIALIZER_LISTS);
 	    expr = cp_parser_braced_list (parser);
+	  }
+	/* Try "return if" extension only for 'return' (not 'co_return').  */
+	else if (keyword == RID_RETURN)
+	  {
+	    cp_token *t0 = cp_lexer_peek_token (parser->lexer);
+	    cp_token *t1 = cp_lexer_peek_nth_token (parser->lexer, 2);
+
+	    if (t0 && t0->type == CPP_KEYWORD && t0->keyword == RID_IF)
+	      {
+	        cp_lexer_consume_token (parser->lexer); /* consume 'if' */
+
+	        /* Parse the operand: braced-init-list or expression.  */
+	        if (cp_lexer_next_token_is (parser->lexer, CPP_OPEN_BRACE))
+	          {
+	            cp_lexer_set_source_position (parser->lexer);
+	            maybe_warn_cpp0x (CPP0X_INITIALIZER_LISTS);
+	            expr = cp_parser_braced_list (parser);
+	          }
+	        else
+	          expr = cp_parser_expression (parser);
+
+	        return_if_p = true;
+	      }
+	    else if (t0 && t1 && t1->type == CPP_KEYWORD && t1->keyword == RID_IF)
+	      {
+	        /* Unary operator followed by 'if' */
+	        switch (t0->type)
+	          {
+	          case CPP_NOT:   return_if_unop = TRUTH_NOT_EXPR;  break; /* !x */
+	          case CPP_COMPL: return_if_unop = BIT_NOT_EXPR;    break; /* ~x */
+	          case CPP_MULT:  return_if_unop = INDIRECT_REF;    break; /* *x */
+	          case CPP_AND:   return_if_unop = ADDR_EXPR;       break; /* &x */
+	          case CPP_PLUS:  return_if_unop = UNARY_PLUS_EXPR; break; /* +x */
+	          case CPP_MINUS: return_if_unop = NEGATE_EXPR;     break; /* -x */
+	          default:        return_if_unop = ERROR_MARK;      break;
+	          }
+
+	        if (return_if_unop != ERROR_MARK)
+	          {
+	            return_if_has_unop = true;
+	            return_if_unop_loc = t0->location;
+
+	            cp_lexer_consume_token (parser->lexer); /* consume unary op */
+	            cp_lexer_consume_token (parser->lexer); /* consume 'if' */
+
+	            if (cp_lexer_next_token_is (parser->lexer, CPP_OPEN_BRACE))
+	              {
+	                cp_lexer_set_source_position (parser->lexer);
+	                maybe_warn_cpp0x (CPP0X_INITIALIZER_LISTS);
+	                expr = cp_parser_braced_list (parser);
+	              }
+	            else
+	              expr = cp_parser_expression (parser);
+
+	            return_if_p = true;
+	          }
+	      }
+
+	    /* Normal return parsing if it wasn't "return if" */
+	    if (!return_if_p)
+	      {
+	        if (cp_lexer_next_token_is_not (parser->lexer, CPP_SEMICOLON))
+	          expr = cp_parser_expression (parser);
+	        else
+	          expr = NULL_TREE;
+	      }
 	  }
 	else if (cp_lexer_next_token_is_not (parser->lexer, CPP_SEMICOLON))
 	  expr = cp_parser_expression (parser);
@@ -17169,13 +17239,22 @@ cp_parser_jump_statement (cp_parser* parser, tree &std_attrs)
 		std_attrs = remove_attribute ("clang", "musttail", std_attrs);
 	      }
 
-	    tree ret_expr = expr;
-	    if (ret_expr && TREE_CODE (ret_expr) == TARGET_EXPR)
-	      ret_expr = TARGET_EXPR_INITIAL (ret_expr);
-	    if (ret_expr && TREE_CODE (ret_expr) == AGGR_INIT_EXPR)
-	      AGGR_INIT_EXPR_MUST_TAIL (ret_expr) = musttail_p;
+	    if (return_if_p)
+	      {
+	        if (musttail_p)
+	          error_at (token->location,
+	                    "%<musttail%> not supported with %<return if%>");
+	      }
 	    else
-	      set_musttail_on_return (expr, token->location, musttail_p);
+	      {
+	        tree ret_expr = expr;
+	        if (ret_expr && TREE_CODE (ret_expr) == TARGET_EXPR)
+	          ret_expr = TARGET_EXPR_INITIAL (ret_expr);
+	        if (ret_expr && TREE_CODE (ret_expr) == AGGR_INIT_EXPR)
+	          AGGR_INIT_EXPR_MUST_TAIL (ret_expr) = musttail_p;
+	        else
+	          set_musttail_on_return (expr, token->location, musttail_p);
+	      }
 	  }
 
 	/* Build the return-statement, check co-return first, since type
@@ -17184,6 +17263,13 @@ cp_parser_jump_statement (cp_parser* parser, tree &std_attrs)
 	  statement = finish_co_return_stmt (token->location, expr);
 	else if (FNDECL_USED_AUTO (current_function_decl) && in_discarded_stmt)
 	  /* Don't deduce from a discarded return statement.  */;
+	else if (return_if_p)
+	  {
+	    statement = finish_return_if_stmt (token->location, expr,
+	                                       return_if_has_unop,
+	                                       return_if_unop,
+	                                       return_if_unop_loc);
+	  }
 	else
 	  statement = finish_return_stmt (expr);
 	/* Look for the final `;'.  */
