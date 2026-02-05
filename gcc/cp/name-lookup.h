@@ -294,6 +294,8 @@ struct GTY(()) cp_binding_level {
       are wrapped in TREE_LISTs; the TREE_VALUE is the OVERLOAD.  */
   tree names;
 
+  tree nrvo_decl;
+
   /* Using directives.  */
   vec<tree, va_gc> *using_directives;
 

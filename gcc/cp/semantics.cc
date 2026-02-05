@@ -1581,6 +1581,23 @@ finish_do_stmt (tree cond, tree do_stmt, bool ivdep, tree unroll,
   finish_loop_cond (&DO_COND (do_stmt), do_body);
 }
 
+static tree
+cp_active_nrvo_decl (void)
+{
+  for (cp_binding_level *b = current_binding_level; b; b = b->level_chain)
+    if (b->nrvo_decl)
+      return b->nrvo_decl;
+  return NULL_TREE;
+}
+
+static tree
+strip_nrvo_return_operand (tree e)
+{
+  e = tree_strip_any_location_wrapper (e);
+  e = tree_strip_nop_conversions (e);
+  return e;
+}
+
 /* Finish a return-statement.  The EXPRESSION returned, if any, is as
    indicated.  */
 
@@ -1590,6 +1607,34 @@ finish_return_stmt (tree expr)
   tree r;
   bool no_warning;
   bool dangling;
+
+  if (!processing_template_decl)
+    {
+      tree nrvo = cp_active_nrvo_decl ();
+      if (nrvo)
+        {
+          if (!expr)
+            {
+              error_at (input_location,
+                        "return with no value not allowed while %<nrvo%> variable %qD is in scope",
+                        nrvo);
+              current_function_returns_value = 1;
+              current_function_return_value = error_mark_node;
+              return error_mark_node;
+            }
+
+          tree op = strip_nrvo_return_operand (expr);
+          if (op != nrvo)
+            {
+              error_at (cp_expr_loc_or_input_loc (expr),
+                        "must return the %<nrvo%> variable %qD while it is in scope",
+                        nrvo);
+              current_function_returns_value = 1;
+              current_function_return_value = error_mark_node;
+              return error_mark_node;
+            }
+        }
+    }
 
   expr = check_return_expr (expr, &no_warning, &dangling);
 
@@ -5959,18 +6004,20 @@ finalize_nrv_r (tree* tp, int* walk_subtrees, void* data)
    RESULT_DECL for the function.  */
 
 void
-finalize_nrv (tree fndecl, tree var)
+finalize_nrv (tree fndecl, tree var, bool copy_name_p /* = true */)
 {
   class nrv_data data;
   tree result = DECL_RESULT (fndecl);
 
-  /* Copy name from VAR to RESULT.  */
-  DECL_NAME (result) = DECL_NAME (var);
-  /* Don't forget that we take its address.  */
-  TREE_ADDRESSABLE (result) = TREE_ADDRESSABLE (var);
-  /* Finally set DECL_VALUE_EXPR to avoid assigning
-     a stack slot at -O0 for the original var and debug info
-     uses RESULT location for VAR.  */
+  /* Copy name from VAR to RESULT (debug nicety).  Only do this once.  */
+  if (copy_name_p)
+    DECL_NAME (result) = DECL_NAME (var);
+
+  /* RESULT must be addressable if *any* aliased VAR was.  */
+  TREE_ADDRESSABLE (result) = (TREE_ADDRESSABLE (result)
+			      || TREE_ADDRESSABLE (var));
+
+  /* Alias VAR to RESULT.  */
   SET_DECL_VALUE_EXPR (var, result);
   DECL_HAS_VALUE_EXPR_P (var) = 1;
 
@@ -5978,14 +6025,12 @@ finalize_nrv (tree fndecl, tree var)
   data.result = result;
   data.in_nrv_cleanup = false;
 
-  /* This is simpler for variables declared in the outer scope of
-     the function so we know that their lifetime always ends with a
-     return; see g++.dg/opt/nrv6.C.  */
   tree outer = outer_curly_brace_block (fndecl);
   data.simple = chain_member (var, BLOCK_VARS (outer));
 
   cp_walk_tree (&DECL_SAVED_TREE (fndecl), finalize_nrv_r, &data, 0);
 }
+
 
 /* Create CP_OMP_CLAUSE_INFO for clause C.  Returns true if it is invalid.  */
 

@@ -7785,6 +7785,7 @@ extern tree get_guard				(tree);
 extern tree get_guard_cond			(tree, bool);
 extern tree set_guard				(tree);
 extern bool var_needs_tls_wrapper		(tree);
+extern bool want_nrvo_p		(tree, tree);
 extern tree maybe_get_tls_wrapper_call		(tree);
 extern void mark_needed				(tree);
 extern bool decl_needed_p			(tree);
@@ -8625,7 +8626,7 @@ extern bool check_accessibility_of_qualified_id (tree, tree, tree, tsubst_flags_
 extern tree finish_qualified_id_expr		(tree, tree, bool, bool,
 						 bool, bool, tsubst_flags_t);
 extern void simplify_aggr_init_expr		(tree *);
-extern void finalize_nrv			(tree, tree);
+extern void finalize_nrv			(tree, tree, bool=true);
 extern tree omp_reduction_id			(enum tree_code, tree, tree);
 extern tree omp_mapper_id			(tree, tree);
 extern tree cp_remove_omp_priv_cleanup_stmt	(tree *, int *, void *);

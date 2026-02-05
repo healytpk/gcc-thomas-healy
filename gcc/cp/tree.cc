@@ -5672,6 +5672,8 @@ static const attribute_spec std_attributes[] =
     handle_interceptor_attribute, NULL },
   { "noreturn", 0, 0, true, false, false, false,
     handle_noreturn_attribute, attr_noreturn_exclusions },
+  { "nrvo", 0, 0, false, false, false, false,
+    handle_nrvo_attribute, NULL },
   { "carries_dependency", 0, 0, true, false, false, false,
     handle_carries_dependency_attribute, NULL },
   { "indeterminate", 0, 0, true, false, false, false,

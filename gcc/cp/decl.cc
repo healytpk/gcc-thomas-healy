@@ -9574,6 +9574,121 @@ maybe_diagnose_deallocation_noexcept_false (tree decl)
 
 static void cp_maybe_mangle_decomp (tree, cp_decomp *);
 
+static bool
+nrvo_attr_present_p (tree decl)
+{
+  tree attrs = DECL_ATTRIBUTES (decl);
+  if (!attrs)
+    return false;
+  return (lookup_attribute ("gnu", "nrvo", attrs)
+	  || lookup_attribute ("nrvo", attrs));
+}
+
+/* Diagnose bad uses of [[nrvo]] / [[gnu::nrvo]].
+   This is separate from maybe_rebind_nrvo_local_to_return_slot because we want
+   diagnostics for static locals / namespace-scope vars too.  */
+static void
+diagnose_nrvo_attribute (tree decl)
+{
+  if (!nrvo_attr_present_p (decl))
+    return;
+
+  location_t loc = DECL_SOURCE_LOCATION (decl);
+
+  /* Must be an automatic local variable.  */
+  if (!DECL_FUNCTION_SCOPE_P (decl) || TREE_STATIC (decl) || DECL_EXTERNAL (decl))
+    {
+      error_at (loc, "%<nrvo%> attribute only applies to automatic local variables");
+      return;
+    }
+
+  /* In a template pattern, don’t try to reason about return type eligibility;
+     defer until instantiation.  */
+  if (processing_template_decl)
+    return;
+
+  if (!current_function_decl)
+    {
+      error_at (loc, "%<nrvo%> attribute only applies to local variables inside a function");
+      return;
+    }
+
+  tree functype = TREE_TYPE (TREE_TYPE (current_function_decl)); /* declared return type */
+
+  /* Must return by value (not reference).  */
+  if (functype && TYPE_REF_P (functype))
+    {
+      error_at (loc,
+		"%<nrvo%> variable %qD cannot be declared in a function returning reference type %qT",
+		decl, functype);
+      return;
+    }
+
+  /* Return type must match (ignoring top-level cv).  */
+  if (!same_type_ignoring_top_level_qualifiers_p (functype, TREE_TYPE (decl)))
+    {
+      error_at (loc,
+		"%<nrvo%> variable %qD must have the function return type %qT",
+		decl, functype);
+      return;
+    }
+
+  /* If there is no return slot on this target, just warn/ignore.
+     (Keeps this attribute usable in templates / generic code.)  */
+  if (!aggregate_value_p (functype, current_function_decl))
+    warning_at (loc, OPT_Wattributes,
+		"%<nrvo%> ignored for %qD: return type %qT does not use a return slot on this target",
+		decl, functype);
+}
+
+
+static void
+maybe_rebind_nrvo_local_to_return_slot (tree decl)
+{
+  tree attrs = DECL_ATTRIBUTES (decl);
+  tree attr = (attrs ? lookup_attribute ("gnu", "nrvo", attrs) : NULL_TREE);
+  if (!attr)
+    attr = (attrs ? lookup_attribute ("nrvo", attrs) : NULL_TREE);
+
+  if (!attr)
+    return;
+
+  if (processing_template_decl)
+    return; /* v1: defer diagnostics until instantiation */
+
+  /* If it's not an automatic local in a function scope, just ignore it.
+     (Don't hard-error; this attribute should be benign in templates.)  */
+  if (!DECL_FUNCTION_SCOPE_P (decl) || TREE_STATIC (decl) || DECL_EXTERNAL (decl))
+    return;
+
+  if (!current_function_decl)
+    return;
+
+  tree ret_type = TREE_TYPE (TREE_TYPE (current_function_decl));
+  tree var_type = TREE_TYPE (decl);
+
+  /* Only force when the variable has the function return type.  Otherwise
+     ignore the attribute (important for templates).  */
+  if (!same_type_ignoring_top_level_qualifiers_p (ret_type, var_type))
+    return;
+
+  /* Must be returned via hidden return slot on this target.  */
+  if (!aggregate_value_p (ret_type, current_function_decl))
+    return;
+
+  /* Forbid nesting or multiple nrvo variables simultaneously.  */
+  for (cp_binding_level *b = current_binding_level; b; b = b->level_chain)
+    if (b->nrvo_decl)
+      {
+        error_at (DECL_SOURCE_LOCATION (decl),
+                  "cannot declare %<nrvo%> variable %qD while %<nrvo%> variable %qD is in scope",
+                  decl, b->nrvo_decl);
+        return;
+      }
+
+  current_binding_level->nrvo_decl = decl;
+}
+
 /* Finish processing of a declaration;
    install its line number and initial value.
    If the length of an array type is not known before,
@@ -9750,6 +9865,9 @@ cp_finish_decl (tree decl, tree init, bool init_const_expr_p,
 	    TREE_TYPE (tmpl) = type;
 	}
     }
+
+  if (VAR_P (decl))
+    diagnose_nrvo_attribute (decl);
 
   if (ensure_literal_type_for_constexpr_object (decl) == error_mark_node)
     {
@@ -10226,6 +10344,10 @@ cp_finish_decl (tree decl, tree init, bool init_const_expr_p,
       /* A variable definition.  */
       else if (DECL_FUNCTION_SCOPE_P (decl) && !TREE_STATIC (decl))
 	{
+	  /* If this is a forced-NRVO local, bind it to the return slot
+	     before we emit its initialization.  */
+	  maybe_rebind_nrvo_local_to_return_slot (decl);
+
 	  /* Initialize the local variable.  */
 	  if (!decomp)
 	    initialize_local_var (decl, init, false);
@@ -20676,6 +20798,56 @@ add_return_star_this_fixit (gcc_rich_location *richloc, tree fndecl)
 				       indent);
 }
 
+struct collect_nrvo_vars_data
+{
+  auto_vec<tree> vars;
+};
+
+static tree
+collect_nrvo_vars_r (tree *tp, int * /*walk_subtrees*/, void *data_)
+{
+  tree t = *tp;
+  if (!t)
+    return NULL_TREE;
+
+  if (VAR_P (t) && DECL_ATTRIBUTES (t))
+    {
+      tree attrs = DECL_ATTRIBUTES (t);
+      if (!lookup_attribute ("gnu", "nrvo", attrs) && !lookup_attribute ("nrvo", attrs))
+        return NULL_TREE;
+
+      auto *data = (collect_nrvo_vars_data *) data_;
+
+      /* Avoid duplicates (cheap linear scan; fine for v1).  */
+      for (tree v : data->vars)
+        if (v == t)
+          return NULL_TREE;
+
+      data->vars.safe_push (t);
+    }
+
+  return NULL_TREE;
+}
+
+static void
+finalize_forced_nrvo (tree fndecl, bool copy_name_p)
+{
+  collect_nrvo_vars_data data;
+  cp_walk_tree (&DECL_SAVED_TREE (fndecl), collect_nrvo_vars_r, &data, 0);
+
+  tree functype = TREE_TYPE (TREE_TYPE (fndecl));   // declared return type
+
+  bool first = true;
+  for (tree v : data.vars)
+    {
+      if (!want_nrvo_p (v, functype))
+        continue;  // ignore attribute for this instantiation/function
+
+      finalize_nrv (fndecl, v, /*copy_name_p=*/(copy_name_p && first));
+      first = false;
+    }
+}
+
 /* Finish up a function declaration and compile that function
    all the way to assembler language output.  The free the storage
    for the function definition. INLINE_P is TRUE if we just
@@ -20870,6 +21042,8 @@ finish_function (bool inline_p)
   if (current_class_name)
     ctype = current_class_type;
 
+  bool did_normal_nrv = false;
+
   if (DECL_DELETED_FN (fndecl))
     {
       DECL_INITIAL (fndecl) = error_mark_node;
@@ -20957,9 +21131,17 @@ finish_function (bool inline_p)
   if (tree r = current_function_return_value)
     {
       if (r != error_mark_node)
-	finalize_nrv (fndecl, r);
+        {
+          finalize_nrv (fndecl, r);
+          did_normal_nrv = true;
+        }
       current_function_return_value = NULL_TREE;
     }
+
+  /* Forced NRVO variables nominated with [[gnu::nrvo]].  */
+  if (!processing_template_decl)
+    finalize_forced_nrvo (fndecl, /*copy_name_p=*/!did_normal_nrv);
+
 
   /* Must mark the RESULT_DECL as being in this function.  */
   DECL_CONTEXT (DECL_RESULT (fndecl)) = fndecl;

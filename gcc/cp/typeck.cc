@@ -11278,7 +11278,7 @@ can_do_nrvo_p (tree retval, tree functype)
 /* True if we would like to perform NRVO, i.e. can_do_nrvo_p is true and we
    would otherwise return in memory.  */
 
-static bool
+extern bool
 want_nrvo_p (tree retval, tree functype)
 {
   return (can_do_nrvo_p (retval, functype)
@@ -11521,6 +11521,17 @@ maybe_warn_pessimizing_move (tree expr, tree type, bool return_p)
 			"redundant move in initialization"))
 	inform (loc, "remove %<std::move%> call");
     }
+}
+
+static inline bool
+nrvo_attr_p (tree t)
+{
+  if (!t || !VAR_P (t) || !DECL_ATTRIBUTES (t))
+    return false;
+
+  tree attrs = DECL_ATTRIBUTES (t);
+  return (lookup_attribute ("gnu", "nrvo", attrs)
+          || lookup_attribute ("nrvo", attrs));  // unscoped form
 }
 
 /* Check that returning RETVAL from the current function is valid.
@@ -11782,9 +11793,15 @@ check_return_expr (tree retval, bool *no_warning, bool *dangling)
     {
       retval = maybe_undo_parenthesized_ref (retval);
       bare_retval = tree_strip_any_location_wrapper (retval);
+      bare_retval = tree_strip_nop_conversions (bare_retval);
     }
 
+  bool has_nrvo_attr = nrvo_attr_p (bare_retval);
   bool named_return_value_okay_p = want_nrvo_p (bare_retval, functype);
+
+  /* Only “forced” when it’s actually eligible; otherwise ignore attribute  */
+  bool forced_nrvo_p = has_nrvo_attr && named_return_value_okay_p;
+
   if (fn_returns_value_p && flag_elide_constructors
       && current_function_return_value != bare_retval)
     {
@@ -11798,7 +11815,7 @@ check_return_expr (tree retval, bool *no_warning, bool *dangling)
 	{
 	  /* The earlier NRV is out of scope at this point, so it's safe to
 	     leave it alone; the current return can't refer to it.  */;
-	  if (named_return_value_okay_p
+	  if (!forced_nrvo_p && named_return_value_okay_p
 	      && !warning_suppressed_p (current_function_decl, OPT_Wnrvo))
 	    {
 	      warning (OPT_Wnrvo, "not eliding copy on return from %qD",
@@ -11808,16 +11825,20 @@ check_return_expr (tree retval, bool *no_warning, bool *dangling)
 	}
       else
 	{
-	  if ((named_return_value_okay_p
+	  if (!forced_nrvo_p && (named_return_value_okay_p
 	       || (current_function_return_value
-		   && current_function_return_value != error_mark_node))
+	       && current_function_return_value != error_mark_node))
 	      && !warning_suppressed_p (current_function_decl, OPT_Wnrvo))
 	    {
 	      warning (OPT_Wnrvo, "not eliding copy on return in %qD",
 		       current_function_decl);
 	      suppress_warning (current_function_decl, OPT_Wnrvo);
 	    }
-	  current_function_return_value = error_mark_node;
+	    /* This is the 53637 limitation.  For forced [[nrvo]] returns,
+	       do not poison NRVO globally here; we’ll handle each return
+	       site later (multi-NRV).  */
+	    if (!forced_nrvo_p)
+	      current_function_return_value = error_mark_node;
 	}
     }
 
@@ -11836,6 +11857,13 @@ check_return_expr (tree retval, bool *no_warning, bool *dangling)
   else
     {
       int flags = LOOKUP_NORMAL | LOOKUP_ONLYCONVERTING;
+      if (forced_nrvo_p)
+        {
+          /* Forced [[gnu::nrvo]]: do not do return conversions at all.
+             We will synthesize an NRV INIT_EXPR later and let finalize_nrv
+             rewrite it away, so copy/move must not be checked here.  */
+          goto forced_conversions_done;
+        }
 
       /* The functype's return type will have been set to void, if it
 	 was an incomplete type.  Just treat this as 'return;' */
@@ -11850,6 +11878,13 @@ check_return_expr (tree retval, bool *no_warning, bool *dangling)
 	 the conditions for the named return value optimization.  */
       bool converted = false;
       tree moved;
+
+      /* Forced [[gnu::nrvo]]: do NOT perform return-as-rvalue / copy/move
+         analysis.  We will synthesize an NRV-marked INIT_EXPR later that
+         finalize_nrv will rewrite away.  */
+      if (forced_nrvo_p)
+        converted = true;
+
       /* Until C++23, this was only interesting for class type, but in C++23,
 	 we should do the below when we're converting from/to a class/reference
 	 (a non-scalar type).  */
@@ -11901,6 +11936,15 @@ check_return_expr (tree retval, bool *no_warning, bool *dangling)
 	*dangling = true;
     }
 
+  forced_conversions_done:
+    ;
+
+  if (check_out_of_consteval_use (retval))
+    {
+      current_function_return_value = error_mark_node;
+      return error_mark_node;
+    }
+
   /* A naive attempt to reduce the number of -Wdangling-reference false
      positives: if we know that this function can return a variable with
      static storage duration rather than one of its parameters, suppress
@@ -11915,11 +11959,24 @@ check_return_expr (tree retval, bool *no_warning, bool *dangling)
   if (processing_template_decl)
     return saved_retval;
 
-  /* Actually copy the value returned into the appropriate location.  */
-  if (retval && retval != result)
+  /* Forced [[gnu::nrvo]]: create an NRV-marked INIT_EXPR that refers to the
+     specific returned variable (so multiple forced-NRVO vars in different
+     scopes remain distinguishable).  finalize_nrv will rewrite this so it
+     must not require copy/move to exist.  */
+  if (forced_nrvo_p)
+    {
+      tree rhs = bare_retval;
+      tree init = build2 (INIT_EXPR, valtype, result, rhs);
+      TREE_SIDE_EFFECTS (init) = 1;
+      INIT_EXPR_NRV_P (init) = true;
+      retval = init;
+    }
+  else if (retval && retval != result)
     retval = cp_build_init_expr (result, retval);
 
-  if (current_function_return_value == bare_retval)
+  if (retval
+      && TREE_CODE (retval) == INIT_EXPR
+      && (forced_nrvo_p || current_function_return_value == bare_retval))
     INIT_EXPR_NRV_P (retval) = true;
 
   if (tree set = maybe_set_retval_sentinel ())

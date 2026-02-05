@@ -4910,6 +4910,7 @@ push_binding_level (cp_binding_level *scope)
 {
   /* Add it to the front of currently active scopes stack.  */
   scope->level_chain = current_binding_level;
+  scope->nrvo_decl   = NULL_TREE;
   current_binding_level = scope;
   keep_next_level_flag = false;
 
