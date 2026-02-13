@@ -8532,6 +8532,9 @@ extern tree finish_return_if_stmt		(location_t, tree, bool, enum tree_code, loca
 extern tree begin_switch_stmt			(void);
 extern void finish_switch_cond			(tree, tree);
 extern void finish_switch_stmt			(tree);
+extern tree finish_switch_class_case_label (location_t loc, tree expr);
+extern tree finish_switch_class_default_label (location_t loc);
+extern void lower_switch_class (tree);
 extern tree finish_goto_stmt			(tree);
 extern tree begin_try_block			(void);
 extern void finish_try_block			(tree);

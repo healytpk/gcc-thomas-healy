@@ -4766,6 +4766,7 @@ cp_parser_new (cp_lexer *lexer)
 
   /* We are not in a switch statement.  */
   parser->in_switch_statement_p = false;
+  parser->in_switch_class_statement_p = false;
 
   /* We are not parsing a type-id inside an expression.  */
   parser->in_type_id_in_expr_p = false;
@@ -14919,6 +14920,37 @@ cp_parser_label_for_labeled_statement (cp_parser* parser, tree attributes)
 
 	/* Consume the `case' token.  */
 	cp_lexer_consume_token (parser->lexer);
+	
+	if (parser->in_switch_statement_p && parser->in_switch_class_statement_p)
+	  {
+	    /* Arbitrary expression, not constant-expression.  */
+	    expr = cp_parser_expression (parser);
+	    if (check_for_bare_parameter_packs (expr))
+	      expr = error_mark_node;
+	
+	    /* No case ranges for switch class (recommended).  */
+	    if (cp_lexer_peek_token (parser->lexer)->type == CPP_ELLIPSIS)
+	      {
+	        cp_token *ellipsis_for_switch_class = cp_lexer_consume_token (parser->lexer);
+	        /* Parse RHS to recover and then error.  */
+	        (void) cp_parser_expression (parser);
+	        error_at (ellipsis_for_switch_class->location,
+	                  "case ranges are not supported in %<switch class%>");
+	      }
+	
+	    /* Create an unnamed label + record (expr,label).  */
+	    label = finish_switch_class_case_label (token->location, expr);
+	
+	    if (label && TREE_CODE (label) == LABEL_DECL)
+	      {
+	        FALLTHROUGH_LABEL_P (label) = fallthrough_p;
+	        if (!warning_enabled_at (input_location, OPT_Wunused_label))
+	          suppress_warning (label, OPT_Wunused_label);
+	      }
+
+	    break;
+	  }
+
 	/* Parse the constant-expression.  */
 	expr = cp_parser_constant_expression (parser);
 	if (check_for_bare_parameter_packs (expr))
@@ -14961,6 +14993,17 @@ cp_parser_label_for_labeled_statement (cp_parser* parser, tree attributes)
 
       if (parser->in_switch_statement_p)
 	{
+	  if ( parser->in_switch_class_statement_p )
+	    {
+	      label = finish_switch_class_default_label (token->location);
+	      if (label && TREE_CODE (label) == LABEL_DECL)
+	        {
+	          FALLTHROUGH_LABEL_P (label) = fallthrough_p;
+	          if (!warning_enabled_at (input_location, OPT_Wunused_label))
+	          suppress_warning (label, OPT_Wunused_label);
+	        }
+	      break;
+	    }
 	  tree l = finish_case_label (token->location, NULL_TREE, NULL_TREE);
 	  if (l && TREE_CODE (l) == CASE_LABEL_EXPR)
 	      {
@@ -15523,6 +15566,15 @@ cp_parser_selection_statement (cp_parser* parser, bool *if_p,
 	    return statement;
 	  }
 
+	bool switch_class_p = false;
+
+	if ( (keyword == RID_SWITCH)
+	      && cp_lexer_next_token_is_keyword (parser->lexer, RID_CLASS))
+	  {
+	    cp_lexer_consume_token (parser->lexer);
+	    switch_class_p = true;
+	  }
+
 	/* Look for the `('.  */
 	matching_parens parens;
 	if (!parens.require_open (parser))
@@ -15538,7 +15590,11 @@ cp_parser_selection_statement (cp_parser* parser, bool *if_p,
 	    IF_STMT_CONSTEXPR_P (statement) = cx;
 	  }
 	else
-	  statement = begin_switch_stmt ();
+	  {
+	    statement = begin_switch_stmt ();
+	    if ( (keyword==RID_SWITCH) && switch_class_p )
+	      SWITCH_STMT_CLASS_P (statement) = 1;
+	  }
 
 	/* Parse the optional init-statement.  */
 	if (cp_parser_init_statement_p (parser))
@@ -15691,6 +15747,7 @@ cp_parser_selection_statement (cp_parser* parser, bool *if_p,
 	else
 	  {
 	    bool in_switch_statement_p;
+	    bool in_switch_class_statement_p;
 	    unsigned char in_statement;
 
 	    /* Add the condition.  */
@@ -15698,12 +15755,18 @@ cp_parser_selection_statement (cp_parser* parser, bool *if_p,
 
 	    /* Parse the body of the switch-statement.  */
 	    in_switch_statement_p = parser->in_switch_statement_p;
+	    in_switch_class_statement_p = parser->in_switch_class_statement_p;
 	    in_statement = parser->in_statement;
+
 	    parser->in_switch_statement_p = true;
+	    parser->in_switch_class_statement_p = switch_class_p;
 	    parser->in_statement |= IN_SWITCH_STMT;
+
 	    cp_parser_implicitly_scoped_statement (parser, if_p,
 						   guard_tinfo);
+
 	    parser->in_switch_statement_p = in_switch_statement_p;
+	    parser->in_switch_class_statement_p = in_switch_class_statement_p;
 	    parser->in_statement = in_statement;
 
 	    /* Now we're all done with the switch-statement.  */

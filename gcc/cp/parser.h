@@ -352,6 +352,7 @@ struct GTY(()) cp_parser {
      The difference relates to giving the right sets of error messages:
      "case not in switch" vs "break statement used with OpenMP...".  */
   bool in_switch_statement_p;
+  bool in_switch_class_statement_p;
 
   /* TRUE if we are parsing a type-id in an expression context.  In
      such a situation, both "type (expr)" and "type (type)" are valid

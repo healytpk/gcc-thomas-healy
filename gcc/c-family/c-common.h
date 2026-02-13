@@ -1584,7 +1584,8 @@ extern tree build_userdef_literal (tree suffix_id, tree value,
 /* True if the body of a switch stmt contains no BREAK_STMTs.  */
 #define SWITCH_STMT_NO_BREAK_P(NODE) \
   TREE_LANG_FLAG_2 (SWITCH_STMT_CHECK (NODE))
-
+#define SWITCH_STMT_CLASS_P(NODE) \
+  TREE_LANG_FLAG_4 (SWITCH_STMT_CHECK (NODE))
 
 /* Nonzero if NODE is the target for genericization of 'break' stmts.  */
 #define LABEL_DECL_BREAK(NODE) \

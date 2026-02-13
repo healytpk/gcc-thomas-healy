@@ -4717,6 +4717,11 @@ struct cp_switch
   /* Set if inside of {FOR,DO,WHILE}_BODY nested inside of a switch,
      where BREAK_STMT doesn't belong to the SWITCH_STMT.  */
   bool in_loop_body_p;
+
+  /* The following three are needed to implement 'switch class' */
+  vec<tree, va_gc> *class_case_exprs;
+  vec<tree, va_gc> *class_case_labels;
+  tree class_default_label;
 };
 
 /* A stack of the currently active switch statements.  The innermost
@@ -4737,10 +4742,13 @@ push_switch (tree switch_stmt)
   p->level = current_binding_level;
   p->next = switch_stack;
   p->switch_stmt = switch_stmt;
-  p->cases = splay_tree_new (case_compare, NULL, NULL);
+  p->cases = SWITCH_STMT_CLASS_P (switch_stmt) ? NULL : splay_tree_new (case_compare, NULL, NULL);
   p->has_default_p = false;
   p->break_stmt_seen_p = false;
   p->in_loop_body_p = false;
+  p->class_case_exprs  = nullptr;
+  p->class_case_labels = nullptr;
+  p->class_default_label = NULL_TREE;
   switch_stack = p;
 }
 
@@ -4749,13 +4757,15 @@ pop_switch (void)
 {
   struct cp_switch *cs = switch_stack;
 
+  const bool is_switch_class = SWITCH_STMT_CLASS_P (cs->switch_stmt);
+
   /* Emit warnings as needed.  */
   location_t switch_location = cp_expr_loc_or_input_loc (cs->switch_stmt);
   tree cond = SWITCH_STMT_COND (cs->switch_stmt);
   const bool bool_cond_p
     = (SWITCH_STMT_TYPE (cs->switch_stmt)
        && TREE_CODE (SWITCH_STMT_TYPE (cs->switch_stmt)) == BOOLEAN_TYPE);
-  if (!processing_template_decl)
+  if (!processing_template_decl && !is_switch_class)
     c_do_switch_warnings (cs->cases, switch_location,
 			  SWITCH_STMT_TYPE (cs->switch_stmt), cond,
 			  bool_cond_p);
@@ -4764,6 +4774,8 @@ pop_switch (void)
      case labels cover all possible values and if there are break; stmts.  */
   if (cs->has_default_p
       || (!processing_template_decl
+      && !is_switch_class
+      && cs->cases
 	  && c_switch_covers_all_cases_p (cs->cases,
 					  SWITCH_STMT_TYPE (cs->switch_stmt))))
     SWITCH_STMT_ALL_CASES_P (cs->switch_stmt) = 1;
@@ -4779,7 +4791,8 @@ pop_switch (void)
   if (is_bitfield_expr_with_lowered_type (cond))
     SWITCH_STMT_TYPE (cs->switch_stmt) = TREE_TYPE (cond);
   gcc_assert (!cs->in_loop_body_p);
-  splay_tree_delete (cs->cases);
+  if (cs->cases)
+    splay_tree_delete (cs->cases);
   switch_stack = switch_stack->next;
   free (cs);
 }
@@ -4849,6 +4862,173 @@ case_conversion (tree type, tree value)
     value = ovalue;
 
   return cxx_constant_value (value);
+}
+
+/* Lower a 'switch class' into:
+     switch (0)
+     {
+       case 0:
+         auto&& __sw = (expr);
+         if (__sw == e0) goto L0;
+         if (__sw == e1) goto L1;
+         ...
+         goto Ldefault;   // or goto Lend;
+       Ldefault: ...
+       L0: ...
+       L1: ...
+     Lend:
+       ;
+     }
+*/
+
+void
+lower_switch_class (tree switch_stmt)
+{
+  gcc_assert (switch_stack);
+  gcc_assert (switch_stack->switch_stmt == switch_stmt);
+  gcc_assert (SWITCH_STMT_CLASS_P (switch_stmt));
+
+  cp_switch *cs = switch_stack;
+
+  /* Grab the original condition expression, preserving any init-stmt
+     that finish_cond may have wrapped in a TREE_LIST.  */
+  tree cond_tree = SWITCH_STMT_COND (switch_stmt);
+  tree cond_expr = cond_tree;
+  if (cond_expr && TREE_CODE (cond_expr) == TREE_LIST)
+    cond_expr = TREE_VALUE (cond_expr);
+
+  location_t loc = cp_expr_loc_or_input_loc (switch_stmt);
+
+  /* Rewrite the *real* switch condition to constant 0 (but keep init).  */
+  tree zero = build_int_cst (integer_type_node, 0);
+  if (cond_tree && TREE_CODE (cond_tree) == TREE_LIST)
+    TREE_VALUE (cond_tree) = zero;
+  else
+    SWITCH_STMT_COND (switch_stmt) = zero;
+
+  /* From here on, this is an ordinary integer switch.  */
+  SWITCH_STMT_TYPE (switch_stmt) = integer_type_node;
+
+  tree body = SWITCH_STMT_BODY (switch_stmt);
+  gcc_assert (body && TREE_CODE (body) == STATEMENT_LIST);
+
+  /* Create an artificial end label and append it at the end of the body,
+     so we can "goto end" when there is no default.  */
+  tree end_lab   = create_artificial_label (loc);
+  TREE_USED (end_lab) = 1;
+
+  {
+    tree end_label_stmt = build_stmt (loc, LABEL_EXPR, end_lab);
+    tree_stmt_iterator it = tsi_start (body);
+    while (!tsi_end_p (it))
+      tsi_next (&it);
+    /* Insert before the end iterator => append.  */
+    tsi_link_before (&it, end_label_stmt, TSI_SAME_STMT);
+  }
+
+  /* Build and inject: case 0:  */
+  tree case0_lab = create_artificial_label (loc);
+  TREE_USED (case0_lab) = 1;
+  tree case0_stmt = build_case_label (zero, NULL_TREE, case0_lab);
+
+  /* Build: auto&& __sw = <orig-cond>;
+     (Model auto&& as T& for lvalues, T&& otherwise.)  */
+  if (cond_expr == NULL_TREE)
+    cond_expr = error_mark_node;
+
+  bool want_rvref = (cond_expr != error_mark_node) && !lvalue_p (cond_expr);
+  tree sw_type = cp_build_reference_type (TREE_TYPE (cond_expr), want_rvref);
+
+  tree sw_decl = create_temporary_var (sw_type);
+  DECL_ARTIFICIAL (sw_decl) = 1;
+  TREE_USED (sw_decl) = 1;
+  pushdecl (sw_decl);
+
+  tree sw_decl_stmt = build_stmt (loc, DECL_EXPR, sw_decl);
+  tree sw_init = cp_build_modify_expr (loc, sw_decl, INIT_EXPR,
+                                       cond_expr, tf_warning_or_error);
+  tree sw_init_stmt = build_stmt (loc, EXPR_STMT, sw_init);
+
+  /* Tail: goto default; else goto end.  */
+  tree tail_target = cs->class_default_label ? cs->class_default_label : end_lab;
+  TREE_USED (tail_target) = 1;
+  tree tail_stmt = build_stmt (loc, GOTO_EXPR, tail_target);
+
+  /* Splice the prologue at the start of SWITCH_STMT_BODY.
+     Note: with TSI_SAME_STMT, insertion order is the final order.  */
+  tree_stmt_iterator tsi = tsi_start (body);
+
+  tsi_link_before (&tsi, case0_stmt, TSI_SAME_STMT);
+  tsi_link_before (&tsi, sw_decl_stmt, TSI_SAME_STMT);
+  tsi_link_before (&tsi, sw_init_stmt, TSI_SAME_STMT);
+
+  unsigned n = vec_safe_length (cs->class_case_exprs);
+  gcc_assert (n == vec_safe_length (cs->class_case_labels));
+  op_location_t oploc (loc);
+
+  for (unsigned i = 0; i < n; ++i)
+    {
+      tree e = (*cs->class_case_exprs)[i];
+      tree lab = (*cs->class_case_labels)[i];
+      TREE_USED (lab) = 1;
+
+      tree lhs = sw_decl;
+      if (TREE_CODE (TREE_TYPE (lhs)) == REFERENCE_TYPE)
+        lhs = convert_from_reference (lhs);
+
+      tree rhs = e;
+      /* Optional but recommended: string literals are ARRAY_TYPE, decay them. */
+      if (rhs && TREE_TYPE (rhs) && TREE_CODE (TREE_TYPE (rhs)) == ARRAY_TYPE)
+        rhs = decay_conversion (rhs, tf_warning_or_error);
+
+      tree cmp = build_x_binary_op (oploc, EQ_EXPR, lhs, rhs,
+                                     tf_warning_or_error);
+      cmp = condition_conversion (cmp);
+
+      tree g = build_stmt (loc, GOTO_EXPR, lab);
+      /* IF_STMT operands: cond, then, else, scope.  */
+      tree ifs = build_stmt (loc, IF_STMT, cmp, g, NULL_TREE, NULL_TREE);
+
+      tsi_link_before (&tsi, ifs, TSI_SAME_STMT);
+    }
+
+  tsi_link_before (&tsi, tail_stmt, TSI_SAME_STMT);
+}
+
+tree
+finish_switch_class_case_label (location_t loc, tree expr)
+{
+  gcc_assert (switch_stack);
+  gcc_assert (SWITCH_STMT_CLASS_P (switch_stack->switch_stmt));
+
+  tree label = create_artificial_label (loc);
+
+  /* Emit the label into the statement stream at this point.  */
+  add_stmt (build_stmt (loc, LABEL_EXPR, label));
+
+  /* Record mapping in source order.  */
+  vec_safe_push (switch_stack->class_case_exprs, expr);
+  vec_safe_push (switch_stack->class_case_labels, label);
+
+  return label;
+}
+
+tree
+finish_switch_class_default_label (location_t loc)
+{
+  gcc_assert (switch_stack);
+  gcc_assert (SWITCH_STMT_CLASS_P (switch_stack->switch_stmt));
+
+  if (switch_stack->class_default_label)
+    error_at (loc, "multiple %<default%> labels in %<switch class%>");
+
+  tree label = create_artificial_label (loc);
+
+  add_stmt (build_stmt (loc, LABEL_EXPR, label));
+
+  switch_stack->class_default_label = label;
+  switch_stack->has_default_p = true; /* optional, but helps existing diagnostics */
+  return label;
 }
 
 /* Note that we've seen a definition of a case label, and complain if this

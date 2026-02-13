@@ -2188,7 +2188,7 @@ finish_switch_cond (tree cond, tree switch_stmt)
 {
   tree orig_type = NULL;
 
-  if (!processing_template_decl)
+  if (!processing_template_decl && !SWITCH_STMT_CLASS_P (switch_stmt))
     {
       /* Convert the condition to an integer or enumeration type.  */
       tree orig_cond = cond;
@@ -2221,6 +2221,23 @@ finish_switch_cond (tree cond, tree switch_stmt)
 	  cond = maybe_cleanup_point_expr (cond);
 	}
     }
+  else if (!processing_template_decl && SWITCH_STMT_CLASS_P (switch_stmt))
+    {
+      tree cond_expr = cond;
+      if (cond_expr && TREE_CODE (cond_expr) == TREE_LIST)
+        cond_expr = TREE_VALUE (cond_expr);
+
+      if (cond_expr != error_mark_node)
+        cond_expr = maybe_cleanup_point_expr (cond_expr);
+
+      orig_type = (cond_expr ? TREE_TYPE (cond_expr) : NULL_TREE);
+
+      if (cond && TREE_CODE (cond) == TREE_LIST)
+        TREE_VALUE (cond) = cond_expr;
+      else
+        cond = cond_expr;
+    }
+
   if (check_for_bare_parameter_packs (cond))
     cond = error_mark_node;
   else if (!processing_template_decl && warn_sequence_point)
@@ -2243,6 +2260,8 @@ finish_switch_stmt (tree switch_stmt)
 
   SWITCH_STMT_BODY (switch_stmt) =
     pop_stmt_list (SWITCH_STMT_BODY (switch_stmt));
+  if (SWITCH_STMT_CLASS_P (switch_stmt))
+    lower_switch_class (switch_stmt);
   pop_switch ();
 
   scope = SWITCH_STMT_SCOPE (switch_stmt);
