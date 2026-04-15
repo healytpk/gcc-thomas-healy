@@ -47,6 +47,7 @@ gtfiles="\
 \$(srcdir)/cp/except.cc \
 \$(srcdir)/cp/friend.cc \
 \$(srcdir)/cp/init.cc \
+\$(srcdir)/cp/interceptor.cc \
 \$(srcdir)/cp/lambda.cc \$(srcdir)/cp/lex.cc \$(srcdir)/cp/logic.cc \
 \$(srcdir)/cp/mangle.cc \$(srcdir)/cp/method.cc \$(srcdir)/cp/module.cc \
 \$(srcdir)/cp/name-lookup.cc \

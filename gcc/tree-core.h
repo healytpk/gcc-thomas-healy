@@ -1928,6 +1928,7 @@ struct GTY(()) tree_decl_common {
   unsigned lang_flag_6 : 1;
   unsigned lang_flag_7 : 1;
   unsigned lang_flag_8 : 1;
+  unsigned lang_flag_9 : 1;
 
   /* In VAR_DECL and PARM_DECL, this is DECL_REGISTER
      In TRANSLATION_UNIT_DECL, this is TRANSLATION_UNIT_WARN_EMPTY_P.

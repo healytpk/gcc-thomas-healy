@@ -22,6 +22,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "system.h"
 #include "coretypes.h"
 #include "tree.h"
+#include "interceptor.h"
 #include "cp-tree.h"
 #include "gimple-expr.h"
 #include "cgraph.h"
@@ -5667,6 +5668,8 @@ static const attribute_spec std_attributes[] =
     handle_likeliness_attribute, attr_cold_hot_exclusions },
   { "unlikely", 0, 0, false, false, false, false,
     handle_likeliness_attribute, attr_cold_hot_exclusions },
+  { "interceptor", 0, 0, true, false, false, false,
+    handle_interceptor_attribute, NULL },
   { "noreturn", 0, 0, true, false, false, false,
     handle_noreturn_attribute, attr_noreturn_exclusions },
   { "carries_dependency", 0, 0, true, false, false, false,

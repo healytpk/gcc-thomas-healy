@@ -3110,6 +3110,8 @@ extern tree vector_element_bits_tree (const_tree);
   (DECL_COMMON_CHECK (NODE)->decl_common.lang_flag_7)
 #define DECL_LANG_FLAG_8(NODE) \
   (DECL_COMMON_CHECK (NODE)->decl_common.lang_flag_8)
+#define DECL_LANG_FLAG_9(NODE) \
+  (DECL_COMMON_CHECK (NODE)->decl_common.lang_flag_9)
 
 /* Nonzero for a scope which is equal to file scope.  */
 #define SCOPE_FILE_SCOPE_P(EXP)	\

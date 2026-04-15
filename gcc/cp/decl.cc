@@ -41,6 +41,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "flags.h"
 #include "tree-iterator.h"
 #include "decl.h"
+#include "interceptor.h"
 #include "intl.h"
 #include "toplev.h"
 #include "c-family/c-objc.h"
@@ -20323,6 +20324,7 @@ start_function (cp_decl_specifier_seq *declspecs,
   tree decl1;
 
   decl1 = grokdeclarator (declarator, declspecs, FUNCDEF, 1, &attrs);
+
   invoke_plugin_callbacks (PLUGIN_START_PARSE_FUNCTION, decl1);
   if (decl1 == error_mark_node)
     return false;
@@ -20332,6 +20334,10 @@ start_function (cp_decl_specifier_seq *declspecs,
        (and issued a diagnostic) if the user got it wrong.  */
     gcc_assert (same_type_p (TREE_TYPE (TREE_TYPE (decl1)),
 			     integer_type_node));
+
+  /* Handle [[interceptor]] functions */
+  if (lookup_attribute ("interceptor", DECL_ATTRIBUTES (decl1)))
+    start_function_interceptor (&decl1);  /* The value of 'decl1' will change */
 
   return start_preparsed_function (decl1, attrs, /*flags=*/SF_DEFAULT);
 }
@@ -21062,6 +21068,9 @@ finish_function (bool inline_p)
   /* If we have used outlined contracts checking functions, build and emit
      them here.  */
   finish_function_outlined_contracts (fndecl);
+
+  /* If finishing an [[interceptor]] function, emit the thunk. */
+  queue_emission_of_interceptor_thunk_if_decl_is_interceptor (fndecl);
 
   return fndecl;
 }

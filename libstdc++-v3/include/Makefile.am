@@ -37,6 +37,7 @@ std_freestanding = \
 	${std_srcdir}/expected \
 	${std_srcdir}/functional \
 	${std_srcdir}/generator \
+	${std_srcdir}/interceptor \
 	${std_srcdir}/iterator \
 	${std_srcdir}/limits \
 	${std_srcdir}/mdspan \

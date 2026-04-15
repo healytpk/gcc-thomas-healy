@@ -33,6 +33,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "trans-mem.h"
 #include "intl.h"
 #include "decl.h"
+#include "interceptor.h"
 #include "c-family/c-objc.h"
 #include "plugin.h"
 #include "tree-pretty-print.h"
@@ -10631,6 +10632,12 @@ cp_parser_unary_expression (cp_parser *parser, cp_id_kind * pidk,
 	    tree expr;
 	    location_t kw_loc = token->location;
 
+	    if (0 == strncmp (IDENTIFIER_POINTER (DECL_NAME (current_function_decl)), "__core_", 7))
+	      {
+		error_at (kw_loc, "interceptor function cannot also be a coroutine");
+		return error_mark_node;
+	      }
+
 	    /* Consume the `co_await' token.  */
 	    cp_lexer_consume_token (parser->lexer);
 	    /* Parse its cast-expression.  */
@@ -17042,6 +17049,15 @@ cp_parser_jump_statement (cp_parser* parser, tree &std_attrs)
       {
 	tree expr;
 
+	if (0 == strncmp (IDENTIFIER_POINTER (DECL_NAME (current_function_decl)), "__core_", 7))
+	  {
+	    error_at (token->location,
+	              RID_RETURN==keyword
+	              ? "interceptor function cannot contain a %<return%> statement"
+	              : "interceptor function cannot also be a coroutine");
+	    break;
+	  }
+
 	if (cp_lexer_next_token_is (parser->lexer, CPP_OPEN_BRACE))
 	  {
 	    cp_lexer_set_source_position (parser->lexer);
@@ -17117,6 +17133,34 @@ cp_parser_jump_statement (cp_parser* parser, tree &std_attrs)
 	  cp_lexer_consume_token (parser->lexer);
 	  /* Parse the dependent expression.  */
 	  finish_goto_stmt (cp_parser_expression (parser));
+	}
+      else if (cp_lexer_next_token_is (parser->lexer, CPP_DEREF))
+	{
+	  tree expr;
+	  tree converted;
+
+	  /* Consume the '->' token.  */
+	  cp_lexer_consume_token (parser->lexer);
+
+	  if (0 != strncmp (IDENTIFIER_POINTER (DECL_NAME (current_function_decl)), "__core_", 7))
+	    {
+	      error_at (token->location, "only an interceptor function can use the %<goto ->%> feature");
+	      expr = cp_parser_expression (parser);
+	      cp_parser_require (parser, CPP_SEMICOLON, RT_SEMICOLON);
+	      statement = error_mark_node;
+	      break;
+	    }
+
+	  expr = cp_parser_expression (parser);
+	  converted = build_interceptor_goto_target (token->location, expr);
+
+	  if (converted == error_mark_node)
+	    statement = error_mark_node;
+	  else
+	    statement = finish_return_stmt (converted);
+
+	  cp_parser_require (parser, CPP_SEMICOLON, RT_SEMICOLON);
+	  break;
 	}
       else
 	{
@@ -32873,6 +32917,12 @@ cp_parser_yield_expression (cp_parser* parser)
   location_t kw_loc = token->location; /* Save for later.  */
 
   cp_parser_require_keyword (parser, RID_CO_YIELD, RT_CO_YIELD);
+
+  if (0 == strncmp (IDENTIFIER_POINTER (DECL_NAME (current_function_decl)), "__core_", 7))
+    {
+      error_at (kw_loc, "interceptor function cannot also be a coroutine");
+      return error_mark_node;
+    }
 
   if (cp_lexer_next_token_is (parser->lexer, CPP_OPEN_BRACE))
     {
@@ -58041,6 +58091,8 @@ c_parse_file (void)
   class_decl_loc_t::diag_mismatched_tags ();
 
   the_parser = NULL;
+
+  flush_pending_interceptor_thunks ();
 
   finish_translation_unit ();
 }

@@ -1,0 +1,198 @@
+// <interceptor> -*- C++ -*-
+
+// Copyright (C) 2008-2026 Free Software Foundation, Inc.
+//
+// This file is part of the GNU ISO C++ Library.  This library is free
+// software; you can redistribute it and/or modify it under the
+// terms of the GNU General Public License as published by the
+// Free Software Foundation; either version 3, or (at your option)
+// any later version.
+
+// This library is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+
+// Under Section 7 of GPL version 3, you are granted additional
+// permissions described in the GCC Runtime Library Exception, version
+// 3.1, as published by the Free Software Foundation.
+
+// You should have received a copy of the GNU General Public License and
+// a copy of the GCC Runtime Library Exception along with this program;
+// see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
+// <http://www.gnu.org/licenses/>.
+
+/** @file include/interceptor
+ *  This is a Standard C++ Library header.
+ */
+
+#ifndef _GLIBCXX_INTERCEPTOR
+#define _GLIBCXX_INTERCEPTOR 1
+
+#ifdef _GLIBCXX_SYSHDR
+#pragma GCC system_header
+#endif
+
+#include <cstddef>                   // ptrdiff_t
+#include <cstdint>                   // uintptr_t
+#include <cstdio>                    // stderr
+
+extern "C" std::uintptr_t __interceptor_xmm_ymm_zmm_Checker_ASM(void);  // implemented in assembler
+
+namespace std {
+
+        namespace interceptor_detail {
+
+
+                inline std::uintptr_t xmm_ymm_zmm_Checker(void)
+                {
+                        std::uintptr_t const retval = __interceptor_xmm_ymm_zmm_Checker_ASM();
+                        switch ( retval )
+                        {
+                        case 1: // SSE
+                        case 2: // AVX-256
+                        case 3: // AVX-512F
+                                return retval;
+                        }
+                        __builtin_fputs(
+                        "\n"
+                        "========================================================================================\n"
+                        "||                                                                                    ||\n"
+                        "||  Interceptors cannot determine if CPU uses XMM, YMM or ZMM. Calling 'std::abort'.  ||\n"
+                        "||                                                                                    ||\n"
+                        "========================================================================================\n",
+                        stderr);
+                        __builtin_abort();
+                }
+
+#ifdef __x86_64__
+#               if defined(_WIN32) || defined(_WIN64) || defined(__CYGWIN__)
+                        constexpr std::ptrdiff_t arg_offsets[] = { -4, -3, -5, -6, +2, +3 };      // Microsoft ABI  -  RCX, RDX, r8, r9, stack, stack
+                        constexpr std::ptrdiff_t arg_retvals[] = { -7, -3 };  // RAX, RDX
+#               else
+                        constexpr std::ptrdiff_t arg_offsets[] = { -1, -2, -3, -4, -5, -6 };      // System V - RDI, RSI, RDX, RCX, r8, r9
+                        constexpr std::ptrdiff_t arg_retvals[] = { -7, -3 };  // RAX, RDX
+#               endif
+#elif defined(__hppa__)
+                constexpr std::ptrdiff_t arg_offsets[] = { 6, 1, 2, 3, 4, 5 };   // stack grows upwards on HPPA
+                constexpr std::ptrdiff_t arg_retvals[] = { 1, 2 };
+#else
+#               error "CPU instruction set and calling convention unknown"
+#endif
+
+                struct __attribute__((may_alias)) Frame {
+                    auto outward(void) noexcept -> void(*&)(void) { return *static_cast<void(**)(void)>(static_cast<void*>(this)); }
+
+                    void          *&argp(unsigned const index) noexcept { return static_cast<         void**>(static_cast<void*>(this))[   arg_offsets[index]  ]; }
+                    std:: intptr_t &argi(unsigned const index) noexcept { return static_cast<std:: intptr_t*>(static_cast<void*>(this))[   arg_offsets[index]  ]; }
+                    std::uintptr_t &argu(unsigned const index) noexcept { return static_cast<std::uintptr_t*>(static_cast<void*>(this))[   arg_offsets[index]  ]; }
+
+                    void *&arg0p() noexcept { return argp(0u); } std::intptr_t &arg0i() noexcept { return argi(0u); } std::uintptr_t &arg0u() noexcept { return argu(0u); }
+                    void *&arg1p() noexcept { return argp(1u); } std::intptr_t &arg1i() noexcept { return argi(1u); } std::uintptr_t &arg1u() noexcept { return argu(1u); }
+                    void *&arg2p() noexcept { return argp(2u); } std::intptr_t &arg2i() noexcept { return argi(2u); } std::uintptr_t &arg2u() noexcept { return argu(2u); }
+                    void *&arg3p() noexcept { return argp(3u); } std::intptr_t &arg3i() noexcept { return argi(3u); } std::uintptr_t &arg3u() noexcept { return argu(3u); }
+                    void *&arg4p() noexcept { return argp(4u); } std::intptr_t &arg4i() noexcept { return argi(4u); } std::uintptr_t &arg4u() noexcept { return argu(4u); }
+                    void *&arg5p() noexcept { return argp(5u); } std::intptr_t &arg5i() noexcept { return argi(5u); } std::uintptr_t &arg5u() noexcept { return argu(5u); }
+
+                    void          *&r0p() noexcept { return static_cast<         void**>(static_cast<void*>(this))[   arg_retvals[0]  ]; }
+                    std:: intptr_t &r0i() noexcept { return static_cast<std:: intptr_t*>(static_cast<void*>(this))[   arg_retvals[0]  ]; }
+                    std::uintptr_t &r0u() noexcept { return static_cast<std::uintptr_t*>(static_cast<void*>(this))[   arg_retvals[0]  ]; }
+
+                    void          *&r1p() noexcept { return static_cast<         void**>(static_cast<void*>(this))[   arg_retvals[1]  ]; }
+                    std:: intptr_t &r1i() noexcept { return static_cast<std:: intptr_t*>(static_cast<void*>(this))[   arg_retvals[1]  ]; }
+                    std::uintptr_t &r1u() noexcept { return static_cast<std::uintptr_t*>(static_cast<void*>(this))[   arg_retvals[1]  ]; }
+                };
+
+}} // close namespaces std::interceptor_detail::
+
+extern "C" {
+
+inline std::uintptr_t __interceptor_xmm_ymm_zmm = std::interceptor_detail::xmm_ymm_zmm_Checker();
+
+__attribute__((externally_visible,flatten,noinline,used))
+inline auto __interceptor_stashed_addresses(std::uintptr_t arg) -> void(**)(void)
+{
+  bool const is_for_retrieval = arg & 1u;
+  arg &= (std::uintptr_t)-2; // clear the lowest bit
+
+  if ( 0u == arg )
+  {
+    __builtin_fputs(
+    "\n"
+    "===================================================================================\n"
+    "||                                                                               ||\n"
+    "||  Interceptor function given nullptr for stack pointer. Calling 'std::abort'.  ||\n"
+    "||                                                                               ||\n"
+    "===================================================================================\n",
+    stderr);
+    __builtin_abort();
+  }
+
+  struct Frame {
+    std::uintptr_t stack_pointer;
+    void (*original)(void);
+    void (*outward )(void);
+  };
+
+  constexpr unsigned maxdepth = 32u;
+  static thread_local Frame frames[maxdepth] = { /* all nullptr's */ };
+
+  Frame *pf = frames;
+
+  if ( is_for_retrieval )
+  {
+    while ( arg != pf->stack_pointer )
+    {
+      if ( (0u == pf->stack_pointer) || (++pf - frames) >= maxdepth )
+      {
+        __builtin_fputs(
+        "\n"
+        "==================================================================================\n"
+        "||                                                                              ||\n"
+        "||  Memory corruption detected in interceptor functions. Calling 'std::abort'.  ||\n"
+        "||                                                                              ||\n"
+        "==================================================================================\n",
+        stderr);
+        __builtin_abort();
+      }
+    }
+    pf->stack_pointer = 0u;  // free up the slot
+  }
+  else  // is for storing
+  {
+    while ( 0u != pf->stack_pointer )
+    {
+      if ( arg == pf->stack_pointer )
+      {
+        __builtin_fputs(
+        "\n"
+        "=================================================================================\n"
+        "||                                                                             ||\n"
+        "||   Stack smashing detected in interceptor functions. Calling 'std::abort'.   ||\n"
+        "||                                                                             ||\n"
+        "=================================================================================\n",
+        stderr);
+        __builtin_abort();
+      }
+      if ( (++pf - frames) >= maxdepth )
+      {
+        __builtin_fputs(
+        "\n"
+        "============================================================================\n"
+        "||                                                                        ||\n"
+        "||   Too deep recursion in interceptor functions. Calling 'std::abort'.   ||\n"
+        "||                                                                        ||\n"
+        "============================================================================\n",
+        stderr);
+        __builtin_abort();
+      }
+    }
+    pf->stack_pointer = arg;  // occupy the slot
+  }
+
+  return &pf->original;
+}
+
+} // extern "C"
+
+#endif // _GLIBCXX_INTERCEPTOR

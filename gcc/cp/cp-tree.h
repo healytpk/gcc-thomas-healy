@@ -3826,6 +3826,10 @@ struct GTY(()) lang_decl {
 #define DECL_DECLARED_CONSTEXPR_P(DECL) \
   DECL_LANG_FLAG_8 (VAR_OR_FUNCTION_DECL_CHECK (STRIP_TEMPLATE (DECL)))
 
+/* True if DECL is declared [[interceptor]].  */
+#define DECL_INTERCEPTOR_P(NODE) \
+  DECL_LANG_FLAG_9 (FUNCTION_DECL_CHECK (NODE))
+
 /* True if FNDECL is an immediate function.  */
 #define DECL_IMMEDIATE_FUNCTION_P(NODE) \
   (DECL_LANG_SPECIFIC (FUNCTION_DECL_CHECK (STRIP_TEMPLATE (NODE)))	\
