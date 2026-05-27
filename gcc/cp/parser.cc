@@ -49,6 +49,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "c-family/known-headers.h"
 #include "bitmap.h"
 #include "builtins.h"
+#include "classalloca.h"
 #include "contracts.h"
 #include "analyzer/analyzer-language.h"
 
@@ -6532,6 +6533,45 @@ cp_parser_nth_token_starts_splice_without_nns_p (cp_parser *parser, size_t n)
 	  && !cp_parser_splice_spec_is_nns_p (parser));
 }
 
+/* Parse:
+
+     classalloca ( assignment-expression )
+
+   This is deliberately expression-only.  The old forms:
+
+     classalloca(Type, args...)
+     classalloca(callable, args...)
+
+   are intentionally no longer supported.
+
+   Users should write:
+
+     classalloca(T(args...))
+     classalloca(T{args...})
+     classalloca(callable(args...))
+*/
+
+static tree
+cp_parser_classalloca_expression (cp_parser *parser)
+{
+  location_t loc = cp_lexer_peek_token (parser->lexer)->location;
+
+  cp_lexer_consume_token (parser->lexer);
+
+  matching_parens parens;
+  parens.require_open (parser);
+
+  tree expr = cp_parser_assignment_expression (parser);
+
+  parens.require_close (parser);
+
+  tree result = build_classalloca_from_value (expr);
+  if (result != error_mark_node)
+    protected_set_expr_location (result, loc);
+
+  return result;
+}
+
 /* Parse a primary-expression.
 
    primary-expression:
@@ -6959,6 +6999,9 @@ cp_parser_primary_expression (cp_parser *parser,
 	      = make_location (type_location, start_loc, finish_loc);
 	    return build_x_va_arg (combined_loc, expression, type);
 	  }
+
+	case RID_CLASSALLOCA:
+	  return cp_parser_classalloca_expression (parser);
 
 	case RID_C23_VA_START:
 	  return cp_parser_builtin_c23_va_start (parser);
@@ -10306,6 +10349,53 @@ cp_parser_reflect_expression (cp_parser *parser)
   return error_mark_node;
 }
 
+/* Parse:
+
+     %expr
+
+   For example:
+
+     %obj(3.5)
+
+   is parsed as:
+
+     %(obj(3.5))
+
+   and lowered through the same backend as:
+
+     classalloca(obj(3.5))
+
+   build_classalloca_from_value returns an lvalue expression, so the
+   result behaves like decltype(expr)&.
+*/
+
+static tree
+cp_parser_classalloca_unary_expression (cp_parser *parser)
+{
+  location_t loc = cp_lexer_peek_token (parser->lexer)->location;
+
+  /* Consume '%'.  */
+  cp_lexer_consume_token (parser->lexer);
+
+  cp_id_kind idk = CP_ID_KIND_NONE;
+
+  cp_expr operand = cp_parser_cast_expression (parser,
+                                               /*address_p=*/false,
+                                               /*cast_p=*/false,
+                                               /*decltype_p=*/false,
+                                               &idk);
+
+  if (operand == error_mark_node)
+    return error_mark_node;
+
+  tree result = build_classalloca_from_value (operand);
+
+  if (result != error_mark_node)
+    protected_set_expr_location (result, loc);
+
+  return result;
+}
+
 /* Parse a unary-expression.
 
    unary-expression:
@@ -10585,6 +10675,9 @@ cp_parser_unary_expression (cp_parser *parser, cp_id_kind * pidk,
     }
   else if (cp_lexer_next_token_is (parser->lexer, CPP_REFLECT_OP))
     return cp_parser_reflect_expression (parser);
+
+  if (token->type == CPP_MOD)
+    return cp_parser_classalloca_unary_expression (parser);
 
   /* Look for a unary operator.  */
   unary_operator = cp_parser_unary_operator (token);
@@ -11334,7 +11427,6 @@ cp_parser_tokens_start_cast_expression (cp_parser *parser)
     case CPP_DEREF:
     case CPP_DEREF_STAR:
     case CPP_DIV:
-    case CPP_MOD:
     case CPP_LSHIFT:
     case CPP_RSHIFT:
     case CPP_LESS:

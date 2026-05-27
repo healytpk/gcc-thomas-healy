@@ -64,6 +64,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "gcc-urlifier.h"
 #include "diagnostic-highlight-colors.h"
 #include "pretty-print-markup.h"
+#include "classalloca.h"
 
 /* Possible cases of bad specifiers type used by bad_specifiers. */
 enum bad_spec_place {
@@ -20754,6 +20755,34 @@ finish_function (bool inline_p)
 
   /* If we're saving up tree structure, tie off the function now.  */
   DECL_SAVED_TREE (fndecl) = pop_stmt_list (DECL_SAVED_TREE (fndecl));
+
+  /* If this function uses 'classalloca', we must call the destructors. */
+  if (cfun->calls_classalloca)
+    {
+      tree head_decl     = cfun->classalloca_chain_head_decl;
+      tree function_body = DECL_SAVED_TREE (fndecl);
+
+      /* Prepend initialisation of the chain head to null at function
+       entry.  This ensures it is always zero-initialised regardless
+       of which scope the first classalloca expression appeared in.  */
+      tree init_head = build2 (MODIFY_EXPR,
+                               TREE_TYPE (head_decl),
+                               head_decl,
+                               build_zero_cst (TREE_TYPE (head_decl)));
+
+      tree init_stmt = build_stmt (input_location, EXPR_STMT, init_head);
+
+      tree new_body = alloc_stmt_list ();
+      append_to_statement_list (init_stmt, &new_body);
+      append_to_statement_list (function_body, &new_body);
+
+      tree cleanup_loop = build_classalloca_cleanup_loop ();
+
+      DECL_SAVED_TREE (fndecl) = build2 (TRY_FINALLY_EXPR,
+                                         void_type_node,
+                                         new_body,
+                                         cleanup_loop);
+    }
 
   finish_fname_decls ();
 

@@ -75,6 +75,7 @@ enum rid
 
   /* C++ */
   RID_FRIEND, RID_VIRTUAL, RID_EXPLICIT, RID_EXPORT, RID_MUTABLE,
+  RID_CLASSALLOCA,
 
   /* ObjC ("PQ" reserved words - they do not appear after a '@' and
      are keywords only in specific contexts)  */

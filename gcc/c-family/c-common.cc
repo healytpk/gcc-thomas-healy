@@ -469,6 +469,7 @@ const struct c_common_resword c_common_reswords[] =
   { "__builtin_types_compatible_p", RID_TYPES_COMPATIBLE_P, D_CONLY },
   { "__builtin_c23_va_start", RID_C23_VA_START,	D_C23 | D_CXX26 },
   { "__builtin_va_arg",	RID_VA_ARG,	0 },
+  { "classalloca",	RID_CLASSALLOCA,	D_CXXONLY },
   { "__complex",	RID_COMPLEX,	0 },
   { "__complex__",	RID_COMPLEX,	0 },
   { "__const",		RID_CONST,	0 },

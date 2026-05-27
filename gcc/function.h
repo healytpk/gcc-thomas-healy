@@ -372,6 +372,12 @@ struct GTY(()) function {
      either as a subroutine or builtin.  */
   unsigned int calls_alloca : 1;
 
+  /* Nonzero if function being compiled calls classalloca.  */
+  unsigned int calls_classalloca : 1;
+
+  /* VAR_DECL for the classalloca cleanup chain head, or NULL_TREE.  */
+  tree classalloca_chain_head_decl;
+
   /* Nonzero if function being compiled can call __builtin_eh_return.  */
   unsigned int calls_eh_return : 1;
 
