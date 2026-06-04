@@ -52,6 +52,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "builtins.h"
 #include "classalloca.h"
 #include "contracts.h"
+#include "typedefangles.h"
 #include "analyzer/analyzer-language.h"
 
 
@@ -2698,6 +2699,8 @@ static void cp_parser_toplevel_declaration
   (cp_parser *);
 static void cp_parser_block_declaration
   (cp_parser *, bool);
+static void cp_parser_typedef_field_map
+  (cp_parser *);
 static void cp_parser_simple_declaration
   (cp_parser *, bool, tree *);
 static void cp_parser_decl_specifier_seq
@@ -18359,6 +18362,14 @@ cp_parser_block_declaration (cp_parser *parser,
     cp_parser_static_assert (parser, /*member_p=*/false);
   else if (cp_parser_next_tokens_are_consteval_block_p (parser))
     cp_parser_consteval_block (parser, /*member_p=*/false);
+  /* typedef < [template-name] > source-type new-name ;
+     Intercept before falling through to cp_parser_simple_declaration.  */
+  else if (token1->keyword == RID_TYPEDEF
+	   && cp_lexer_peek_nth_token (parser->lexer, 2)->type == CPP_LESS)
+    {
+      cp_lexer_consume_token (parser->lexer); /* consume 'typedef' */
+      cp_parser_typedef_field_map (parser);
+    }
   else
     {
       size_t attr_idx = cp_parser_skip_std_attribute_spec_seq (parser, 1);
@@ -18389,6 +18400,104 @@ cp_parser_block_declaration (cp_parser *parser,
 	cp_parser_simple_declaration (parser, !statement_p,
 				      /*maybe_range_for_decl*/NULL);
     }
+}
+
+
+/* Parse a typedef<> / typedef<tmpl> field-mapping declaration.
+
+   typedef-field-map-declaration:
+     'typedef' '<' template-name '>' type-name identifier ';'
+     'typedef' '<'              '>' type-name identifier ';'
+
+   The 'typedef' keyword has already been consumed by the caller.
+   On success, delegates the semantic work to perform_typedef_field_map
+   (typedefangles.cpp).  On any parse error, skips to end-of-statement
+   so that compilation can continue.
+
+   Note: this function is static because all cp_lexer_* / cp_parser_*
+   helpers it calls are static within parser.cc and cannot be called
+   from typedefangles.cpp.  */
+
+static void
+cp_parser_typedef_field_map (cp_parser *parser)
+{
+  location_t loc = cp_lexer_peek_token (parser->lexer)->location;
+
+  if (!cp_parser_require (parser, CPP_LESS, RT_LESS))
+    { cp_parser_skip_to_end_of_statement (parser); return; }
+
+  tree tmpl = NULL_TREE;
+
+  if (!cp_lexer_next_token_is (parser->lexer, CPP_GREATER))
+    {
+      /* Parse the template name; qualified forms (std::optional) are
+	 supported via cp_parser_id_expression's nested-name handling.  */
+      bool template_p;
+      tree name = cp_parser_id_expression (parser,
+					   /*template_keyword_p=*/false,
+					   /*check_dependency_p=*/true,
+					   &template_p,
+					   /*declarator_p=*/false,
+					   /*optional_p=*/false);
+      if (name == error_mark_node)
+	{ cp_parser_skip_to_end_of_statement (parser); return; }
+
+      /* Look up with is_template=true so injected-class-names and
+	 alias templates resolve to their TEMPLATE_DECL.  */
+      tmpl = cp_parser_lookup_name (parser, name,
+				    none_type,
+				    /*is_template=*/true,
+				    /*is_namespace=*/false,
+				    /*check_dependency=*/true,
+				    /*ambiguous_decls=*/NULL,
+				    loc);
+      if (!tmpl || tmpl == error_mark_node)
+	{
+	  error_at (loc, "%qE does not name a template", name);
+	  cp_parser_skip_to_end_of_statement (parser); return;
+	}
+      if (TREE_CODE (tmpl) != TEMPLATE_DECL)
+	{
+	  error_at (loc, "%qE is not a class template", tmpl);
+	  cp_parser_skip_to_end_of_statement (parser); return;
+	}
+    }
+
+  if (!cp_parser_require (parser, CPP_GREATER, RT_GREATER))
+    { cp_parser_skip_to_end_of_statement (parser); return; }
+
+  /* Parse the source struct name.  */
+  cp_token *src_tok = cp_lexer_peek_token (parser->lexer);
+  tree src_name = cp_parser_id_expression (parser, false, true, NULL,
+					   false, false);
+  if (src_name == error_mark_node)
+    { cp_parser_skip_to_end_of_statement (parser); return; }
+
+  tree source_type = cp_parser_lookup_name_simple (parser, src_name,
+						   src_tok->location);
+  if (!source_type || source_type == error_mark_node)
+    {
+      error_at (src_tok->location,
+		"%<typedef<>%>: %qE does not name a type", src_name);
+      cp_parser_skip_to_end_of_statement (parser); return;
+    }
+  if (TREE_CODE (source_type) == TYPE_DECL)
+    source_type = TREE_TYPE (source_type);
+
+  /* Parse the new type name (a plain identifier).  */
+  if (!cp_lexer_next_token_is (parser->lexer, CPP_NAME))
+    {
+      cp_parser_error (parser, "expected identifier for new type name");
+      cp_parser_skip_to_end_of_statement (parser); return;
+    }
+  tree new_name = cp_parser_identifier (parser);
+  if (new_name == error_mark_node)
+    { cp_parser_skip_to_end_of_statement (parser); return; }
+
+  cp_parser_require (parser, CPP_SEMICOLON, RT_SEMICOLON);
+
+  /* Hand off to the semantic layer in typedefangles.cpp.  */
+  perform_typedef_field_map (tmpl, source_type, new_name, loc);
 }
 
 /* Parse a simple-declaration.

@@ -415,6 +415,7 @@ std_freestanding = \
 	${std_srcdir}/tuple \
 	${std_srcdir}/type_traits \
 	${std_srcdir}/typeindex \
+	${std_srcdir}/unaligned \
 	${std_srcdir}/utility \
 	${std_srcdir}/variant \
 	${std_srcdir}/version

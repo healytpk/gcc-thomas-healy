@@ -112,6 +112,7 @@ CXX_AND_OBJCXX_OBJS = \
 	cp/reflect.o cp/rtti.o \
 	cp/search.o cp/semantics.o \
 	cp/tree.o cp/typeck.o cp/typeck2.o \
+	cp/typedefangles.o \
 	cp/vtable-class-hierarchy.o $(CXX_C_OBJS)
 
 ifeq ($(if $(wildcard ../stage_current),$(shell cat \

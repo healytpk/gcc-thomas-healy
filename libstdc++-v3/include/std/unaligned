@@ -1,0 +1,269 @@
+// <unaligned> -*- C++ -*-
+
+// Copyright (C) 2001-2026 Free Software Foundation, Inc.
+//
+// This file is part of the GNU ISO C++ Library.  This library is free
+// software; you can redistribute it and/or modify it under the
+// terms of the GNU General Public License as published by the
+// Free Software Foundation; either version 3, or (at your option)
+// any later version.
+
+// This library is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+
+// Under Section 7 of GPL version 3, you are granted additional
+// permissions described in the GCC Runtime Library Exception, version
+// 3.1, as published by the Free Software Foundation.
+
+// You should have received a copy of the GNU General Public License and
+// a copy of the GCC Runtime Library Exception along with this program;
+// see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
+// <http://www.gnu.org/licenses/>.
+
+/** @file include/unaligned
+ *  This is a Standard C++ Library header.
+ */
+
+#ifndef _GLIBCXX_UNALIGNED
+#define _GLIBCXX_UNALIGNED 1
+
+#ifdef _GLIBCXX_SYSHDR
+#pragma GCC system_header
+#endif
+
+#include <cassert>        // assert
+#include <cstddef>        // byte, size_t
+#include <cstring>        // memcpy
+#include <array>          // array
+#include <new>            // ::new(void*)
+#include <string>         // basic_string
+#include <type_traits>    // (lots of stuff)
+#include <utility>        // forward, move
+
+//#ifndef __clang__
+#   define __datasizeof(x) sizeof(x)  // might cause problems with overlapping objects
+//#endif
+
+template<typename T>
+struct _Relocator_Custom { typedef void R; };  // Relocator type is 'void'
+
+namespace std _GLIBCXX_VISIBILITY(default)
+{
+_GLIBCXX_BEGIN_NAMESPACE_CONTAINER
+
+
+template<typename T> requires is_same_v< T, remove_cvref_t<T> >
+class unaligned {
+public:
+    using value_type = T;
+    static constexpr size_t alignment = alignof(T);
+private:
+    array<byte, __datasizeof(T)> _m_data;
+public:
+    template<typename D, typename S>
+    requires    ((is_void_v<D> || is_same_v<D,T>)
+            && (is_void_v<S> || is_same_v<S,T>))
+    static void unaligned_relocate(D *const d, S *const s) noexcept
+    {
+        if constexpr ( requires { T::_Relocate(d,s); } )
+            { T::_Relocate(d,s); }
+        else if constexpr ( requires { T::_Relocate(static_cast<void*>(d),s); } )
+            { T::_Relocate(static_cast<void*>(d),s); }
+        else if constexpr ( requires { T::_Relocate(d,static_cast<void*>(s)); } )
+            { T::_Relocate(d,static_cast<void*>(s)); }
+        else if constexpr ( requires{T::_Relocate(static_cast<void*>(d),static_cast<void*>(s));} )
+            { T::_Relocate(static_cast<void*>(d),static_cast<void*>(s)); }
+        else if constexpr ( !is_void_v< typename _Relocator_Custom<T>::R > )
+        {
+            using R = typename _Relocator_Custom<T>::R;
+            if constexpr ( requires { R::relocate(d,s); } )
+                { R::relocate(d,s); }
+            else if constexpr ( requires { R::relocate(static_cast<void*>(d),s); } )
+                { R::relocate(static_cast<void*>(d),s); }
+            else if constexpr ( requires { R::relocate(d,static_cast<void*>(s)); } )
+                { R::relocate(d,static_cast<void*>(s)); }
+            else
+                { R::relocate(static_cast<void*>(d),static_cast<void*>(s)); }
+        }
+        else
+        {
+            memcpy(d,s,__datasizeof(T));
+        }
+    }
+private:
+    template<typename Tcv>   // Tcv will be either "T" or "T const"
+    class scoped_manipulator_must_align {
+        void *const p;
+        alignas(T) byte buf[ __datasizeof(T) ];
+        explicit constexpr scoped_manipulator_must_align(void const *const src) noexcept : p( const_cast<void*>(src) )
+        {
+            unaligned_relocate( static_cast<T*>(static_cast<void*>(buf)), p);
+        }
+    public:
+        [[nodiscard]] constexpr Tcv &value(void) noexcept { return *static_cast<Tcv*>(static_cast<void*>(buf)); }
+        constexpr ~scoped_manipulator_must_align(void) { unaligned_relocate(p, static_cast<T*>(static_cast<void*>(buf))); }
+        [[nodiscard]] constexpr auto operator->(void) noexcept
+        {
+            if constexpr ( is_pointer_v<T> ) return static_cast<Tcv&>(*static_cast<Tcv*>(static_cast<void*>(buf)));
+            else /*************************/ return static_cast<Tcv*>( static_cast<void*>(buf) );
+        }
+        scoped_manipulator_must_align(void) = delete;
+        scoped_manipulator_must_align(scoped_manipulator_must_align const &) = delete;
+        scoped_manipulator_must_align(scoped_manipulator_must_align &&) = delete;
+        scoped_manipulator_must_align &operator=(scoped_manipulator_must_align const &) = delete;
+        scoped_manipulator_must_align &operator=(scoped_manipulator_must_align &&) = delete;
+        scoped_manipulator_must_align const volatile *operator&(void) const volatile = delete;
+        template<typename U> void operator,(U&&) = delete;
+        friend class unaligned<T>;
+    };
+    template<typename Tcv>   // Tcv will be either "T" or "T const"
+    class scoped_manipulator_no_need_to_align {
+        void *const p;
+        explicit constexpr scoped_manipulator_no_need_to_align(void const *const src) noexcept : p( const_cast<void*>(src) ) {}
+    public:
+        [[nodiscard]] constexpr Tcv &value(void) noexcept { return *static_cast<Tcv*>(static_cast<void*>(p)); }
+        constexpr ~scoped_manipulator_no_need_to_align(void) = default;
+        [[nodiscard]] constexpr auto operator->(void) noexcept
+        {
+            if constexpr ( is_pointer_v<T> ) return static_cast<Tcv&>(*static_cast<Tcv*>(static_cast<void*>(p)));
+            else /*************************/ return static_cast<Tcv*>( static_cast<void*>(p) );
+        }
+        scoped_manipulator_no_need_to_align(void) = delete;
+        scoped_manipulator_no_need_to_align(scoped_manipulator_no_need_to_align const &) = delete;
+        scoped_manipulator_no_need_to_align(scoped_manipulator_no_need_to_align &&) = delete;
+        scoped_manipulator_no_need_to_align &operator=(scoped_manipulator_no_need_to_align const &) = delete;
+        scoped_manipulator_no_need_to_align &operator=(scoped_manipulator_no_need_to_align &&) = delete;
+        scoped_manipulator_no_need_to_align const volatile *operator&(void) const volatile = delete;
+        template<typename U> void operator,(U&&) = delete;
+        friend class unaligned<T>;
+    };
+public:
+    template<typename Tcv>    // Tcv is T with CV-qualifiers
+    using scoped_manipulator = conditional_t< 1u == alignof(Tcv), scoped_manipulator_no_need_to_align<Tcv>, scoped_manipulator_must_align<Tcv> >;
+    constexpr unaligned(void) noexcept requires is_trivially_constructible_v<T> = default;
+    constexpr unaligned(void) noexcept ( noexcept( T() ) ) requires ((1u!=alignof(T)) && is_default_constructible_v<T> && !is_trivially_constructible_v<T>)
+    {
+        alignas(T) byte buf[ __datasizeof(T) ];
+        T &tmp = *static_cast<T*>(static_cast<void*>(buf));
+        ::new(&tmp) T();
+        unaligned_relocate(static_cast<void*>(&_m_data.front()), &tmp);
+    }
+    constexpr unaligned(void) noexcept ( noexcept( T() ) ) requires ((1u==alignof(T)) && is_default_constructible_v<T> && !is_trivially_constructible_v<T>)
+    {
+        ::new(&_m_data.front()) T();
+    }
+    constexpr explicit unaligned(unaligned const&) noexcept requires is_trivially_copy_constructible_v<T> = default;
+    constexpr explicit unaligned(unaligned const &rhs) noexcept( noexcept( T(rhs.align().value()) ) ) requires ((1u!=alignof(T)) && is_copy_constructible_v<T> && !is_trivially_copy_constructible_v<T>)
+    {
+        alignas(T) byte buf[ __datasizeof(T) ];
+        T &tmp = *static_cast<T*>(static_cast<void*>(buf));
+        ::new(&tmp) T( rhs.align().value() );
+        unaligned_relocate(static_cast<void*>(&_m_data.front()), &tmp);
+    }
+    constexpr explicit unaligned(unaligned const &rhs) noexcept( noexcept( T(rhs.align().value()) ) ) requires ((1u==alignof(T)) && is_copy_constructible_v<T> && !is_trivially_copy_constructible_v<T>)
+    {
+        ::new(&_m_data.front()) T( rhs.align().value() );
+    }
+    constexpr explicit unaligned(unaligned&&) noexcept requires is_trivially_move_constructible_v<T> = default;
+    constexpr explicit unaligned(unaligned &&rhs) noexcept( noexcept( T(move(rhs.align().value())) ) ) requires ((1u!=alignof(T)) && is_move_constructible_v<T> && !is_trivially_move_constructible_v<T>)
+    {
+        alignas(T) byte buf[ __datasizeof(T) ];
+        T &tmp = *static_cast<T*>(static_cast<void*>(buf));
+        ::new(&tmp) T( move( rhs.align().value() ) );
+        unaligned_relocate(static_cast<void*>(&_m_data.front()), &tmp);
+    }
+    constexpr explicit unaligned(unaligned &&rhs) noexcept( noexcept( T(move(rhs.align().value())) ) ) requires ((1u==alignof(T)) && is_move_constructible_v<T> && !is_trivially_move_constructible_v<T>)
+    {
+        ::new(&_m_data.front()) T( move( rhs.align().value() ) );
+    }
+    template<typename... Params>
+    requires ((1u!=alignof(T)) && !((1u == sizeof...(Params)) && (is_same_v< remove_cvref_t<Params>, unaligned > && ...)) )
+    constexpr unaligned(Params&& ...args) noexcept( noexcept( T( forward<Params>(args)... ) ) )
+    {
+        alignas(T) byte buf[ __datasizeof(T) ];
+        T &tmp = *static_cast<T*>(static_cast<void*>(buf));
+        ::new(&tmp) T( forward<Params>(args)... );
+        unaligned_relocate(static_cast<void*>(&_m_data.front()), &tmp);       
+    }
+    template<typename... Params>
+    requires ((1u==alignof(T)) && !((1u == sizeof...(Params)) && (is_same_v< remove_cvref_t<Params>, unaligned > && ...)) )
+    constexpr explicit unaligned(Params&& ...args) noexcept( noexcept( T( forward<Params>(args)... ) ) )
+    {
+        ::new(&_m_data.front()) T( forward<Params>(args)... );      
+    }
+    constexpr ~unaligned(void) requires   is_trivially_destructible_v<T> = default;
+    constexpr ~unaligned(void) requires ((1u!=alignof(T)) && !is_trivially_destructible_v<T>)
+    {
+        alignas(T) byte buf[ __datasizeof(T) ];
+        T &tmp = *static_cast<T*>(static_cast<void*>(buf));
+        unaligned_relocate(&tmp, static_cast<void*>(&_m_data.front()));
+        tmp.~T();
+    }
+    constexpr ~unaligned(void) requires ((1u==alignof(T)) && !is_trivially_destructible_v<T>)
+    {
+        static_cast<T*>(static_cast<void*>(&_m_data.front()))->~T();
+    }
+    constexpr unaligned &operator=(unaligned const&) noexcept = delete;
+    constexpr unaligned &operator=(unaligned const&) noexcept requires is_trivially_copy_assignable_v<T> = default;
+    constexpr unaligned &operator=(unaligned const &rhs) noexcept( noexcept(declval<T&>() = rhs.align().value()) ) 
+    requires ((1u!=alignof(T)) && is_copy_assignable_v<T> && !is_trivially_copy_assignable_v<T>)
+    {
+        alignas(T) byte buf[ __datasizeof(T) ];
+        T &tmp = *static_cast<T*>(static_cast<void*>(buf));
+        unaligned_relocate(&tmp, static_cast<void*>(&_m_data.front()));
+        tmp = rhs.align().value();
+        unaligned_relocate(static_cast<void*>(&_m_data.front()), &tmp);
+        return *this;
+    }
+    constexpr unaligned &operator=(unaligned const &rhs) noexcept( noexcept(declval<T&>() = rhs.align().value()) ) 
+    requires ((1u==alignof(T)) && is_copy_assignable_v<T> && !is_trivially_copy_assignable_v<T>)
+    {
+        *static_cast<T*>(static_cast<void*>(&_m_data.front())) = rhs.align().value();
+        return *this;
+    }
+    constexpr unaligned &operator=(unaligned&&) noexcept requires is_trivially_move_assignable_v<T> = default;
+    constexpr unaligned &operator=(unaligned &&rhs) noexcept( noexcept(declval<T&>() = move(rhs.align().value())) ) 
+    requires ((1u!=alignof(T)) && is_move_assignable_v<T> && !is_trivially_move_assignable_v<T>)
+    {
+        alignas(T) byte buf[ __datasizeof(T) ];
+        T &tmp = *static_cast<T*>(static_cast<void*>(buf));
+        unaligned_relocate(&tmp, static_cast<void*>(&_m_data.front()));
+        tmp = move(rhs.align().value());
+        unaligned_relocate(static_cast<void*>(&_m_data.front()), &tmp); 
+        return *this;
+    }
+    constexpr unaligned &operator=(unaligned &&rhs) noexcept( noexcept(declval<T&>() = move(rhs.align().value())) ) 
+    requires ((1u==alignof(T)) && is_move_assignable_v<T> && !is_trivially_move_assignable_v<T>)
+    {
+        *static_cast<T*>(static_cast<void*>(&_m_data.front())) = move(rhs.align().value());
+        return *this;
+    }
+    template<typename Param> requires ( (1u!=alignof(T)) && !is_same_v< remove_cvref_t<Param>, unaligned > )
+    constexpr unaligned &operator=(Param &&arg) noexcept( noexcept( declval<T&>() = forward<Param>(arg) ) )
+    {
+        alignas(T) byte buf[ __datasizeof(T) ];
+        T &tmp = *static_cast<T*>(static_cast<void*>(buf));
+        unaligned_relocate(&tmp, static_cast<void*>(&_m_data.front()));
+        tmp = forward<Param>(arg);
+        unaligned_relocate(static_cast<void*>(&_m_data.front()), &tmp);
+        return *this;
+    }
+    template<typename Param> requires ( (1u==alignof(T)) && !is_same_v< remove_cvref_t<Param>, unaligned > )
+    constexpr unaligned &operator=(Param &&arg) noexcept( noexcept( declval<T&>() = forward<Param>(arg) ) )
+    {
+        *static_cast<T*>(static_cast<void*>(&_m_data.front())) = forward<Param>(arg);
+        return *this;
+    }
+    [[nodiscard]] constexpr scoped_manipulator<T      > align(void)            noexcept { return scoped_manipulator<T      >(this); }
+    [[nodiscard]] constexpr scoped_manipulator<T const> align(void)      const noexcept { return scoped_manipulator<T const>(this); }
+    [[nodiscard]] constexpr scoped_manipulator<T      > operator->(void)       noexcept { return scoped_manipulator<T      >(this); }
+    [[nodiscard]] constexpr scoped_manipulator<T const> operator->(void) const noexcept { return scoped_manipulator<T const>(this); }
+};
+
+
+_GLIBCXX_END_NAMESPACE_VERSION
+} // namespace
+
+#endif /* _GLIBCXX_UNALIGNED */
