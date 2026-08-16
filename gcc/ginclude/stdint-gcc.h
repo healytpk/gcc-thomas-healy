@@ -86,6 +86,30 @@ typedef __INTPTR_TYPE__ intptr_t;
 typedef __UINTPTR_TYPE__ uintptr_t;
 #endif
 
+/* Integer types capable of holding function pointers.  [u]intptr_t is
+   specified for *object* pointers only, so on a target whose function
+   pointers are wider it cannot round-trip one; these types can.  Where the
+   two widths agree they are the same types.  */
+
+#ifdef __INTFPTR_TYPE__
+typedef __INTFPTR_TYPE__ intfptr_t;
+#endif
+#ifdef __UINTFPTR_TYPE__
+typedef __UINTFPTR_TYPE__ uintfptr_t;
+#endif
+
+/* Integer types capable of holding *either* kind of address.  [u]intptr_t is
+   specified for object pointers only and [u]intfptr_t covers function
+   pointers; where the two differ in width, these are the wider, so a single
+   variable can carry an address of either kind.  */
+
+#ifdef __INTP_TYPE__
+typedef __INTP_TYPE__ intp_t;
+#endif
+#ifdef __UINTP_TYPE__
+typedef __UINTP_TYPE__ uintp_t;
+#endif
+
 /* 7.8.1.5 Greatest-width integer types */
 
 typedef __INTMAX_TYPE__ intmax_t;

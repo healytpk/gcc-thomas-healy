@@ -505,6 +505,35 @@ if [ x$with_multi_buildlist != x ]; then
   done
 fi
 
+# The m32df ABI has no hosted C library.  glibc is ABI-incompatible with its
+# 64-bit function pointers -- any structure holding one changes size -- and no
+# newlib port for it exists, so its small C library is built into libgcc itself
+# (see libgcc/config/i386/m32df-libc.c).  Every other target library expects a
+# full hosted libc with headers, and libatomic additionally requires pthreads,
+# so none of them can be built for that multilib.  libgcc keeps it: crt0.o, the
+# __dualcall helper and the C library all live there.
+case "${host}" in
+i?86-*-* | x86_64-*-*)
+  case `echo "${ml_realsrcdir}" | sed -e 's,/*$,,' -e 's,.*/,,'` in
+  libgcc)
+	;;
+  *)
+	old_multidirs="${multidirs}"
+	multidirs=""
+	for x in ${old_multidirs}; do
+	  case "/$x/" in
+	  */32df/*)
+		;;
+	  *)
+		multidirs="${multidirs} ${x}"
+		;;
+	  esac
+	done
+	;;
+  esac
+  ;;
+esac
+
 # Remove extraneous blanks from multidirs.
 # Tests like `if [ -n "$multidirs" ]' require it.
 multidirs=`echo "$multidirs" | sed -e 's/^[ ][ ]*//' -e 's/[ ][ ]*$//' -e 's/[ ][ ]*/ /g'`

@@ -11371,6 +11371,54 @@ ix86_expand_call (rtx retval, rtx fnaddr, rtx callarg1,
   gcc_assert (!TARGET_64BIT || !pop);
 
   rtx addr = XEXP (fnaddr, 0);
+
+  /* -m32df: an indirect call goes through a 64-bit dual function pointer
+     packed as (entry:32 | (stack|abi):32).  Route it through the out-of-line
+     __dualcall helper.  The i386 ABI passes arguments on the stack, so unlike
+     a register-argument target the helper must also relocate the argument
+     block when it swaps stacks; see libgcc/config/i386/dualcall.S.  The dual
+     pointer travels in the EDX:EAX pair, which is simply how a DImode value
+     is held on i386 -- entry in %eax, stack + ABI tag in %edx.  Direct
+     (symbolic) calls are unaffected, and ix86_function_ok_for_sibcall forbids
+     tail-calling a dual pointer so the helper always regains control.  */
+  if (ix86_m32df && !SYMBOL_REF_P (addr))
+    {
+      /* The generic call machinery narrows the call target to ptr_mode
+	 (SImode), which would discard the stack address and ABI tag in the
+	 upper half.  prepare_call_address kept the value from before that
+	 narrowing, so use it when it is available; the remaining cases are a
+	 lowpart subreg of the original register, or a genuine 32-bit code
+	 address that simply needs widening (giving a zero upper half, i.e.
+	 "here, now, default convention").  */
+      rtx dual;
+      if (call_target_before_narrowing
+	  && GET_MODE (call_target_before_narrowing) == DImode)
+	dual = copy_to_mode_reg (DImode, call_target_before_narrowing);
+      else if (SUBREG_P (addr) && GET_MODE (SUBREG_REG (addr)) == DImode)
+	dual = SUBREG_REG (addr);
+      else if (GET_MODE (addr) != DImode)
+	dual = convert_to_mode (DImode, addr, 1);
+      else
+	dual = addr;
+      rtx pair = gen_rtx_REG (DImode, AX_REG);
+      emit_move_insn (pair, dual);
+      use_reg (&use, pair);
+      /* Tell the helper how many bytes of outgoing arguments to relocate onto
+	 the stack it swaps in.  CALLARG1 is the argument-block size the
+	 generic call machinery computed for this call; when it is unavailable
+	 (zero, e.g. with -maccumulate-outgoing-args, where the block is not
+	 pushed immediately before the call) fall back to a fixed window, which
+	 is safe because it is read upwards into the caller's own frame.  */
+      rtx nbytes = ((callarg1 && CONST_INT_P (callarg1) && INTVAL (callarg1) > 0)
+		    ? callarg1 : GEN_INT (256));
+      rtx cx = gen_rtx_REG (SImode, CX_REG);
+      emit_move_insn (cx, nbytes);
+      use_reg (&use, cx);
+      rtx sym = gen_rtx_SYMBOL_REF (Pmode, "__dualcall");
+      SYMBOL_REF_FLAGS (sym) |= SYMBOL_FLAG_FUNCTION | SYMBOL_FLAG_EXTERNAL;
+      fnaddr = gen_rtx_MEM (QImode, sym);
+      addr = sym;
+    }
   if (TARGET_MACHO && !TARGET_64BIT)
     {
 #if TARGET_MACHO

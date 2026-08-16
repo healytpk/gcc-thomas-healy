@@ -2067,10 +2067,21 @@ i[34567]86-*-linux* | i[34567]86-*-kfreebsd*-gnu | i[34567]86-*-gnu* | i[34567]8
 			if test "$x86_multilibs" = "default"; then
 				x86_multilibs="m64,m32"
 			fi
+			# The m32df ABI is always built, whatever
+			# --with-multilib-list requested; the rest of
+			# the list is left exactly as asked for, so no
+			# ABI the user did not want gets dragged in.
+			case ,${x86_multilibs}, in
+			*,m32df,*)
+				;;
+			*)
+				x86_multilibs="${x86_multilibs},m32df"
+				;;
+			esac
 			x86_multilibs=`echo $x86_multilibs | sed -e 's/,/ /g'`
 			for x86_multilib in ${x86_multilibs}; do
 				case ${x86_multilib} in
-				m32 | m64 | mx32)
+				m32 | m64 | mx32 | m32df)
 					TM_MULTILIB_CONFIG="${TM_MULTILIB_CONFIG},${x86_multilib}"
 					;;
 				*)
@@ -2137,10 +2148,20 @@ x86_64-*-linux* | x86_64-*-kfreebsd*-gnu | x86_64-*-gnu*)
 			;;
 		esac
 	fi
+	# The m32df ABI is always built, whatever --with-multilib-list requested;
+	# the rest of the list is left exactly as asked for, so no ABI the user did
+	# not want gets dragged in.
+	case ,${x86_multilibs}, in
+	*,m32df,*)
+		;;
+	*)
+		x86_multilibs="${x86_multilibs},m32df"
+		;;
+	esac
 	x86_multilibs=`echo $x86_multilibs | sed -e 's/,/ /g'`
 	for x86_multilib in ${x86_multilibs}; do
 		case ${x86_multilib} in
-		m32 | m64 | mx32)
+		m32 | m64 | mx32 | m32df)
 			TM_MULTILIB_CONFIG="${TM_MULTILIB_CONFIG},${x86_multilib}"
 			;;
 		*)

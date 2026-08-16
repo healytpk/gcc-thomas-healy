@@ -141,6 +141,27 @@ namespace std
 #endif
 
 #endif // _GLIBCXX_USE_C99_STDINT
+
+  // Integer types capable of holding function pointers.  [u]intptr_t is
+  // specified for object pointers only, so on a target whose function
+  // pointers are wider it cannot round-trip one; these types can.  They come
+  // from the compiler's own macros rather than the C library, which does not
+  // provide them.
+#ifdef __INTFPTR_TYPE__
+  using intfptr_t = __INTFPTR_TYPE__;
+#endif
+#ifdef __UINTFPTR_TYPE__
+  using uintfptr_t = __UINTFPTR_TYPE__;
+#endif
+
+  // Integer types capable of holding either kind of address: the wider of
+  // [u]intptr_t and [u]intfptr_t.
+#ifdef __INTP_TYPE__
+  using intp_t = __INTP_TYPE__;
+#endif
+#ifdef __UINTP_TYPE__
+  using uintp_t = __UINTP_TYPE__;
+#endif
 } // namespace std
 
 #endif // C++11

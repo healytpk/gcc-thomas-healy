@@ -17748,7 +17748,13 @@ tsubst (tree t, tree args, tsubst_flags_t complain, tree in_decl)
 	    return error_mark_node;
 	  }
 	else if (TREE_CODE (type) == FUNCTION_TYPE
-		 && (type_memfn_quals (type) != TYPE_UNQUALIFIED
+		 /* An address space is not a cv-qualifier: a target may put
+		    function types in a named address space to give function
+		    pointers a wider representation (i386 -m32df), and that
+		    must not make them "qualified function types", which
+		    cannot have references formed to them.  */
+		 && (CLEAR_QUAL_ADDR_SPACE (type_memfn_quals (type))
+		     != TYPE_UNQUALIFIED
 		     || type_memfn_rqual (type) != REF_QUAL_NONE))
 	  {
 	    if (complain & tf_error)

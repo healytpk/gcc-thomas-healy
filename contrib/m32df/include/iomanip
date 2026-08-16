@@ -1,0 +1,23 @@
+// <iomanip> for the -m32df ABI: see bits/m32df-ostream.h.   -*- C++ -*-
+#ifndef _M32DF_iomanip_
+#define _M32DF_iomanip_ 1
+#include <bits/m32df-ostream.h>
+
+namespace std
+{
+  struct __m32df_setw   { unsigned _M_n; };
+  struct __m32df_setfill { char _M_c; };
+  struct __m32df_setbase { unsigned _M_b; };
+
+  inline __m32df_setw    setw (int __n)      noexcept { return { (unsigned) __n }; }
+  inline __m32df_setfill setfill (char __c)  noexcept { return { __c }; }
+  inline __m32df_setbase setbase (int __b)   noexcept { return { (unsigned) __b }; }
+
+  inline ostream& operator<< (ostream& __o, __m32df_setw __m) noexcept
+  { __o.width (__m._M_n); return __o; }
+  inline ostream& operator<< (ostream& __o, __m32df_setfill __m) noexcept
+  { __o.fill (__m._M_c); return __o; }
+  inline ostream& operator<< (ostream& __o, __m32df_setbase __m) noexcept
+  { __o.base (__m._M_b); return __o; }
+}
+#endif

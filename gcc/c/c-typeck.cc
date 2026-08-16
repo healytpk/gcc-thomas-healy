@@ -478,6 +478,22 @@ c_build_pointer_type (tree to_type)
 					       : TYPE_ADDR_SPACE (to_type);
   machine_mode pointer_mode;
 
+  /* Let the target select a default address space for this pointer (e.g. a
+     wide function-pointer space under -m32df), qualifying it onto the
+     pointed-to type so the pointer mode and all later accesses agree.  The
+     hook only changes the space when TO_TYPE is in the generic space.  */
+  if (to_type != error_mark_node)
+    {
+      addr_space_t das = targetm.addr_space.pointer_addr_space (to_type);
+      if (das != as)
+	{
+	  to_type = build_qualified_type (to_type,
+					  TYPE_QUALS (to_type)
+					  | ENCODE_QUAL_ADDR_SPACE (das));
+	  as = das;
+	}
+    }
+
   if (as != ADDR_SPACE_GENERIC || c_default_pointer_mode == VOIDmode)
     pointer_mode = targetm.addr_space.pointer_mode (as);
   else

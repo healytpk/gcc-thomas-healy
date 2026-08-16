@@ -31,13 +31,18 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
    When the -shared link option is used a final link is not being
    done.  */
 
+/* -m32df is the i386 (ILP32) ABI with 64-bit dual function pointers, so it
+   takes the ordinary 32-bit assembler and linker emulation.  i386 was chosen
+   as the base because ia32 emulation is enabled on essentially every x86-64
+   kernel, so the binaries simply run; x32 process support usually is not.  */
+
 #if TARGET_64BIT_DEFAULT
-#define SPEC_32 "m16|m32"
+#define SPEC_32 "m16|m32|m32df"
 #if TARGET_BI_ARCH == 2
 #define SPEC_64 "m64"
-#define SPEC_X32 "m16|m32|m64:;"
+#define SPEC_X32 "m16|m32|m32df|m64:;"
 #else
-#define SPEC_64 "m16|m32|mx32:;"
+#define SPEC_64 "m16|m32|m32df|mx32:;"
 #define SPEC_X32 "mx32"
 #endif
 #else

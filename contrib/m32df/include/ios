@@ -1,0 +1,5 @@
+// <ios> for the -m32df ABI: see bits/m32df-ostream.h.   -*- C++ -*-
+#ifndef _M32DF_ios_
+#define _M32DF_ios_ 1
+#include <bits/m32df-ostream.h>
+#endif

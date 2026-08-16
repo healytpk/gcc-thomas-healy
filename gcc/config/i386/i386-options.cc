@@ -2072,6 +2072,15 @@ ix86_option_override_internal (bool main_args_p,
     }
 #endif
 
+  /* -m32df is the i386 (ILP32) ABI with 64-bit dual function pointers, so
+     force off every 64-bit bit.  Data pointers stay 32-bit; only function
+     pointers widen (ADDR_SPACE_DUALCODE).  i386 was chosen over x32 as the
+     base because ia32 emulation is enabled on essentially every x86-64
+     kernel, whereas x32 process support usually is not.  */
+  if (opts->x_ix86_m32df)
+    opts->x_ix86_isa_flags &= ~(OPTION_MASK_ISA_64BIT | OPTION_MASK_ABI_64
+				| OPTION_MASK_ABI_X32);
+
   if (TARGET_X32_P (opts->x_ix86_isa_flags))
     {
       /* Always turn on OPTION_MASK_ISA_64BIT and turn off

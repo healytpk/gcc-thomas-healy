@@ -1053,6 +1053,12 @@ ix86_function_ok_for_sibcall (tree decl, tree exp)
   if (ix86_function_naked (current_function_decl))
     return false;
 
+  /* -m32df: a call through a dual function pointer must return so the
+     __dualcall helper can restore the stack it swapped in, so it can never be a
+     sibling (tail) call.  Indirect calls have DECL == NULL_TREE.  */
+  if (ix86_m32df && decl == NULL_TREE)
+    return false;
+
   /* Sibling call isn't OK if there are no caller-saved registers
      since all registers must be preserved before return.  */
   if (cfun->machine->call_saved_registers
@@ -4455,8 +4461,13 @@ ix86_promote_function_mode (const_tree type, machine_mode mode,
 {
   if (cfun->machine->func_type == TYPE_NORMAL
       && type != NULL_TREE
-      && POINTER_TYPE_P (type))
+      && POINTER_TYPE_P (type)
+      && GET_MODE_SIZE (mode) <= GET_MODE_SIZE (word_mode))
     {
+      /* Only widen.  A pointer in a named address space may already be wider
+	 than word_mode -- a __dualcode function pointer is 64-bit while
+	 word_mode is 32-bit under the i386-based -m32df -- and "promoting"
+	 that to word_mode would silently truncate it.  */
       *punsignedp = POINTERS_EXTEND_UNSIGNED;
       return word_mode;
     }
@@ -15046,6 +15057,12 @@ ix86_print_operand_address_as (FILE *file, rtx addr,
   index = parts.index;
   disp = parts.disp;
   scale = parts.scale;
+
+  /* __dualcode (a function pointer) is an ordinary linear address with no
+     segment override, so collapse it to the generic space here -- otherwise
+     the segment-printing switch below hits gcc_unreachable ().  */
+  if (as == ADDR_SPACE_DUALCODE)
+    as = ADDR_SPACE_GENERIC;
 
   if (ADDR_SPACE_GENERIC_P (as))
     as = parts.seg;
@@ -28187,10 +28204,179 @@ ix86_optab_supported_p (int op, machine_mode mode1, machine_mode,
 
 /* All use of segmentation is assumed to make address 0 valid.  */
 
+/* Implement TARGET_ASM_INTEGER.  Under -m32df a function pointer is 8 bytes,
+   but ELF32 has no 64-bit relocation, so a symbolic 8-byte value is emitted as
+   the 32-bit address followed by a zero high half -- a dual pointer naming
+   "here, now, default convention".  */
+
+static bool
+ix86_assemble_integer (rtx x, unsigned int size, int aligned_p)
+{
+  if (ix86_m32df
+      && size == 8
+      && (SYMBOL_REF_P (x)
+	  || GET_CODE (x) == LABEL_REF
+	  || (GET_CODE (x) == CONST
+	      && GET_CODE (XEXP (x, 0)) == PLUS
+	      && SYMBOL_REF_P (XEXP (XEXP (x, 0), 0)))))
+    {
+      assemble_integer (x, 4, 32, 1);
+      assemble_integer (const0_rtx, 4, 32, 1);
+      return true;
+    }
+  return default_assemble_integer (x, size, aligned_p);
+}
+
+/* The .init_array / .fini_array sections hold function pointers, which are 8
+   bytes under -m32df.  The generic helpers emit address-sized (4-byte)
+   entries, which would leave the section holding a mixture of widths once
+   crtstuff -- whose entries are declared as a C array of function pointers --
+   contributes its own.  Emit 8-byte entries here so the section is uniform and
+   the startup code can walk it.  */
+
+static section *
+ix86_initfini_array_section (int priority, bool constructor)
+{
+  char buf[32];
+  const char *name = constructor ? ".init_array" : ".fini_array";
+
+  if (priority != DEFAULT_INIT_PRIORITY)
+    {
+      sprintf (buf, "%s.%.5u", name, priority);
+      name = buf;
+    }
+  return get_section (name, SECTION_WRITE | SECTION_NOTYPE, NULL_TREE);
+}
+
+/* Whatever mechanism the subtarget selected before this override -- ELF
+   init arrays on GNU/Linux, something else on mingw or Darwin -- is captured
+   here so that every ABI but m32df keeps using it unchanged.  */
+#ifdef TARGET_ASM_CONSTRUCTOR
+static void (*const ix86_subtarget_asm_out_constructor) (rtx, int)
+  = TARGET_ASM_CONSTRUCTOR;
+#else
+static void (*const ix86_subtarget_asm_out_constructor) (rtx, int)
+  = default_elf_init_array_asm_out_constructor;
+#endif
+#ifdef TARGET_ASM_DESTRUCTOR
+static void (*const ix86_subtarget_asm_out_destructor) (rtx, int)
+  = TARGET_ASM_DESTRUCTOR;
+#else
+static void (*const ix86_subtarget_asm_out_destructor) (rtx, int)
+  = default_elf_fini_array_asm_out_destructor;
+#endif
+
+static void
+ix86_asm_out_constructor (rtx symbol, int priority)
+{
+  if (!ix86_m32df)
+    {
+      ix86_subtarget_asm_out_constructor (symbol, priority);
+      return;
+    }
+  switch_to_section (ix86_initfini_array_section (priority, true));
+  assemble_align (32);
+  assemble_integer (symbol, 8, 32, 1);
+}
+
+static void
+ix86_asm_out_destructor (rtx symbol, int priority)
+{
+  if (!ix86_m32df)
+    {
+      ix86_subtarget_asm_out_destructor (symbol, priority);
+      return;
+    }
+  switch_to_section (ix86_initfini_array_section (priority, false));
+  assemble_align (32);
+  assemble_integer (symbol, 8, 32, 1);
+}
+
 static bool
 ix86_addr_space_zero_address_valid (addr_space_t as)
 {
-  return as != ADDR_SPACE_GENERIC;
+  return as != ADDR_SPACE_GENERIC && as != ADDR_SPACE_DUALCODE;
+}
+
+/* Address space support for __dualcode -- the 64-bit "dual" function-pointer
+   space used by -m32df.  On the x32 base data pointers are 32-bit (SImode),
+   but a __dualcode function pointer is 64-bit (DImode): its low 32 bits are the
+   code entry and its high 32 bits carry a custom stack address plus an ABI tag
+   (see the __dualcall lowering in ix86_expand_call).  It converts to/from a
+   generic data pointer as a pure width change.  */
+
+static scalar_int_mode
+ix86_addr_space_pointer_mode (addr_space_t as)
+{
+  if (as == ADDR_SPACE_DUALCODE)
+    return DImode;
+  return default_addr_space_pointer_mode (as);
+}
+
+static scalar_int_mode
+ix86_addr_space_address_mode (addr_space_t as)
+{
+  if (as == ADDR_SPACE_DUALCODE)
+    return DImode;
+  return default_addr_space_address_mode (as);
+}
+
+static bool
+ix86_addr_space_valid_pointer_mode (scalar_int_mode mode, addr_space_t as)
+{
+  if (as == ADDR_SPACE_DUALCODE)
+    return mode == DImode;
+  return default_addr_space_valid_pointer_mode (mode, as);
+}
+
+/* __dualcode (a function pointer) is unrelated to the generic data space:
+   converting between a function pointer and an object pointer needs an explicit
+   cast, so it is a subset of nothing but itself.  */
+
+static bool
+ix86_addr_space_subset_p (addr_space_t subset, addr_space_t superset)
+{
+  if (subset == superset)
+    return true;
+  if (subset == ADDR_SPACE_DUALCODE || superset == ADDR_SPACE_DUALCODE)
+    return false;
+  return default_addr_space_subset_p (subset, superset);
+}
+
+/* Convert between a __dualcode function pointer and a generic (32-bit under
+   x32) data pointer: a pure width change.  Narrowing drops the dual pointer's
+   high 32 bits (the custom stack address + ABI tag), keeping the low 32-bit
+   code address; widening zero-extends, so the resulting dual pointer names
+   "here, now, default convention".  */
+
+static rtx
+ix86_addr_space_convert (rtx op, tree from_type, tree to_type)
+{
+  addr_space_t from_as = TYPE_ADDR_SPACE (TREE_TYPE (from_type));
+  addr_space_t to_as = TYPE_ADDR_SPACE (TREE_TYPE (to_type));
+
+  if (from_as == ADDR_SPACE_DUALCODE && to_as == ADDR_SPACE_GENERIC)
+    return convert_to_mode (ptr_mode, op, 1);
+  if (from_as == ADDR_SPACE_GENERIC && to_as == ADDR_SPACE_DUALCODE)
+    return convert_to_mode (DImode, op, 1);
+
+  /* Identical spaces: no change.  */
+  return op;
+}
+
+/* Implement TARGET_ADDR_SPACE_POINTER_ADDR_SPACE.  With -m32df, a pointer to a
+   function type defaults to the 64-bit __dualcode space (so function pointers
+   are 8 bytes while data pointers stay 4); every data pointer and anything
+   already in an explicit space is left in place.  */
+
+static addr_space_t
+ix86_addr_space_pointer_addr_space (tree to_type)
+{
+  if (ix86_m32df
+      && TYPE_ADDR_SPACE (to_type) == ADDR_SPACE_GENERIC
+      && FUNC_OR_METHOD_TYPE_P (to_type))
+    return ADDR_SPACE_DUALCODE;
+  return TYPE_ADDR_SPACE (to_type);
 }
 
 static void
@@ -29252,8 +29438,35 @@ ix86_libgcc_floating_mode_supported_p
 #undef TARGET_CUSTOM_FUNCTION_DESCRIPTORS
 #define TARGET_CUSTOM_FUNCTION_DESCRIPTORS X86_CUSTOM_FUNCTION_TEST
 
+#undef TARGET_ASM_INTEGER
+#define TARGET_ASM_INTEGER ix86_assemble_integer
+
+#undef TARGET_ASM_CONSTRUCTOR
+#define TARGET_ASM_CONSTRUCTOR ix86_asm_out_constructor
+
+#undef TARGET_ASM_DESTRUCTOR
+#define TARGET_ASM_DESTRUCTOR ix86_asm_out_destructor
+
 #undef TARGET_ADDR_SPACE_ZERO_ADDRESS_VALID
 #define TARGET_ADDR_SPACE_ZERO_ADDRESS_VALID ix86_addr_space_zero_address_valid
+
+#undef TARGET_ADDR_SPACE_POINTER_MODE
+#define TARGET_ADDR_SPACE_POINTER_MODE ix86_addr_space_pointer_mode
+
+#undef TARGET_ADDR_SPACE_ADDRESS_MODE
+#define TARGET_ADDR_SPACE_ADDRESS_MODE ix86_addr_space_address_mode
+
+#undef TARGET_ADDR_SPACE_VALID_POINTER_MODE
+#define TARGET_ADDR_SPACE_VALID_POINTER_MODE ix86_addr_space_valid_pointer_mode
+
+#undef TARGET_ADDR_SPACE_SUBSET_P
+#define TARGET_ADDR_SPACE_SUBSET_P ix86_addr_space_subset_p
+
+#undef TARGET_ADDR_SPACE_CONVERT
+#define TARGET_ADDR_SPACE_CONVERT ix86_addr_space_convert
+
+#undef TARGET_ADDR_SPACE_POINTER_ADDR_SPACE
+#define TARGET_ADDR_SPACE_POINTER_ADDR_SPACE ix86_addr_space_pointer_addr_space
 
 #undef TARGET_INIT_LIBFUNCS
 #define TARGET_INIT_LIBFUNCS ix86_init_libfuncs

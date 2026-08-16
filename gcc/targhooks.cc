@@ -1724,6 +1724,15 @@ default_addr_space_address_mode (addr_space_t addrspace ATTRIBUTE_UNUSED)
   return Pmode;
 }
 
+/* Default version of the pointer_addr_space hook: leave a pointer in the
+   address space of the type it points to.  */
+
+addr_space_t
+default_addr_space_pointer_addr_space (tree to_type)
+{
+  return TYPE_ADDR_SPACE (to_type);
+}
+
 /* Named address space version of valid_pointer_mode.
    To match the above, the same modes apply to all address spaces.  */
 

@@ -119,6 +119,7 @@ extern bool alloca_call_p (const_tree);
 extern bool must_pass_in_stack_var_size (const function_arg_info &);
 extern bool must_pass_in_stack_var_size_or_pad (const function_arg_info &);
 extern bool must_pass_va_arg_in_stack (tree);
+extern rtx call_target_before_narrowing;
 extern rtx prepare_call_address (tree, rtx, rtx, rtx *, int, int);
 extern bool shift_return_value (machine_mode, bool, rtx);
 extern rtx expand_call (tree, rtx, int);

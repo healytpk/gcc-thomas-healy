@@ -339,11 +339,28 @@ convert_memory_address_addr_space_1 (scalar_int_mode to_mode ATTRIBUTE_UNUSED,
       break;
 
     case LABEL_REF:
+      if (GET_MODE_SIZE (to_mode) > GET_MODE_SIZE (Pmode)
+	  && crtl->emit.regno_pointer_align_length
+	  && can_create_pseudo_p ())
+	break;
       temp = gen_rtx_LABEL_REF (to_mode, label_ref_label (x));
       LABEL_REF_NONLOCAL_P (temp) = LABEL_REF_NONLOCAL_P (x);
       return temp;
 
     case SYMBOL_REF:
+      /* A symbol can only be re-moded in place if the target can actually
+	 form an address in TO_MODE.  A named address space may have a pointer
+	 wider than Pmode -- a 64-bit __dualcode function pointer on a 32-bit
+	 base -- and no instruction loads a symbol in that mode, so fall
+	 through and emit a real extension of the ordinary address instead.
+	 Only when an extension can actually be emitted, though: in a constant
+	 context (a static initialiser) crtl is not set up and no pseudo may be
+	 created, so the symbol is re-moded in place and the assembler output
+	 hook widens it instead.  */
+      if (GET_MODE_SIZE (to_mode) > GET_MODE_SIZE (Pmode)
+	  && crtl->emit.regno_pointer_align_length
+	  && can_create_pseudo_p ())
+	break;
       temp = shallow_copy_rtx (x);
       PUT_MODE (temp, to_mode);
       return temp;

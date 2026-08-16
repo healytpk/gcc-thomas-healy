@@ -7234,7 +7234,15 @@ build_pointer_type_for_mode (tree to_type, machine_mode mode,
 
   if (mode == VOIDmode)
     {
-      addr_space_t as = TYPE_ADDR_SPACE (to_type);
+      /* Let the target pick a default address space for this pointer/reference
+	 (e.g. a wide function-pointer space), qualifying it onto the pointed-to
+	 type so the mode and all later accesses agree.  The hook only returns a
+	 different space when TO_TYPE is currently in the generic space.  */
+      addr_space_t as = targetm.addr_space.pointer_addr_space (to_type);
+      if (as != TYPE_ADDR_SPACE (to_type))
+	to_type = build_qualified_type (to_type,
+					TYPE_QUALS (to_type)
+					| ENCODE_QUAL_ADDR_SPACE (as));
       mode = targetm.addr_space.pointer_mode (as);
     }
 
@@ -7306,7 +7314,15 @@ build_reference_type_for_mode (tree to_type, machine_mode mode,
 
   if (mode == VOIDmode)
     {
-      addr_space_t as = TYPE_ADDR_SPACE (to_type);
+      /* Let the target pick a default address space for this pointer/reference
+	 (e.g. a wide function-pointer space), qualifying it onto the pointed-to
+	 type so the mode and all later accesses agree.  The hook only returns a
+	 different space when TO_TYPE is currently in the generic space.  */
+      addr_space_t as = targetm.addr_space.pointer_addr_space (to_type);
+      if (as != TYPE_ADDR_SPACE (to_type))
+	to_type = build_qualified_type (to_type,
+					TYPE_QUALS (to_type)
+					| ENCODE_QUAL_ADDR_SPACE (as));
       mode = targetm.addr_space.pointer_mode (as);
     }
 

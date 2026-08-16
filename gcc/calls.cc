@@ -66,6 +66,11 @@ along with GCC; see the file COPYING3.  If not see
 /* Like PREFERRED_STACK_BOUNDARY but in units of bytes, not bits.  */
 #define STACK_BYTES (PREFERRED_STACK_BOUNDARY / BITS_PER_UNIT)
 
+/* Set by prepare_call_address to the call target as it stood before being
+   narrowed to Pmode, when the target's pointer was wider than that; NULL_RTX
+   otherwise.  See the comment in prepare_call_address.  */
+rtx call_target_before_narrowing;
+
 /* Data structure and subroutines used within expand_call.  */
 
 struct arg_data
@@ -223,6 +228,8 @@ rtx
 prepare_call_address (tree fndecl_or_type, rtx funexp, rtx static_chain_value,
 		      rtx *call_fusage, int reg_parm_seen, int flags)
 {
+  call_target_before_narrowing = NULL_RTX;
+
   /* Make a valid memory address and copy constants through pseudo-regs,
      but not for a constant address if -fno-function-cse.  */
   if (GET_CODE (funexp) != SYMBOL_REF)
@@ -289,6 +296,15 @@ prepare_call_address (tree fndecl_or_type, rtx funexp, rtx static_chain_value,
 
       /* If we are using registers for parameters, force the
 	 function address into a register now.  */
+      /* On a target whose function pointers are wider than an address -- the
+	 i386 -m32df ABI, where the upper half of a function pointer carries a
+	 stack address -- narrowing the target to Pmode below would discard that
+	 half.  Keep the unnarrowed value so the back end can recover it.  */
+      if (GET_MODE (funexp) != VOIDmode
+	  && known_gt (GET_MODE_SIZE (GET_MODE (funexp)),
+		       GET_MODE_SIZE (Pmode)))
+	call_target_before_narrowing = funexp;
+
       funexp = ((reg_parm_seen
 		 && targetm.small_register_classes_for_mode_p (FUNCTION_MODE))
 		 ? force_not_mem (memory_address (FUNCTION_MODE, funexp))

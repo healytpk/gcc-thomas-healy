@@ -11544,6 +11544,18 @@ Define this to return the machine mode to use for pointers to
 @var{address_space} if the target supports named address spaces.
 The default version of this hook returns @code{ptr_mode}.
 @end deftypefn
+@deftypefn {Target Hook} addr_space_t TARGET_ADDR_SPACE_POINTER_ADDR_SPACE (tree @var{to_type})
+Define this to return the address space to use for a pointer whose
+pointed-to type is @var{to_type} when the pointer type is built without an
+explicit address space.  This lets a target make a narrower address space the
+default representation for some pointers (for example, data pointers) while
+leaving others (for example, function pointers) in the generic address space.
+The hook must return an address space other than @code{TYPE_ADDR_SPACE
+(to_type)} only when the latter is @code{ADDR_SPACE_GENERIC}.  The default
+implementation returns @code{TYPE_ADDR_SPACE (to_type)}, leaving the pointer
+in the address space of its target type.
+@end deftypefn
+
 
 @deftypefn {Target Hook} scalar_int_mode TARGET_ADDR_SPACE_ADDRESS_MODE (addr_space_t @var{address_space})
 Define this to return the machine mode to use for addresses in

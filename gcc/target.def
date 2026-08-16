@@ -3589,6 +3589,21 @@ The default implementation of the hook returns @code{ADDR_SPACE_GENERIC}.",
  addr_space_t, (tree type, enum artificial_rodata purpose),
  default_addr_space_for_artificial_rodata)
 
+/* Select the address space for a pointer to a given pointed-to type.  */
+DEFHOOK
+(pointer_addr_space,
+ "Define this to return the address space to use for a pointer whose\n\
+pointed-to type is @var{to_type} when the pointer type is built without an\n\
+explicit address space.  This lets a target make a narrower address space the\n\
+default representation for some pointers (for example, data pointers) while\n\
+leaving others (for example, function pointers) in the generic address space.\n\
+The hook must return an address space other than @code{TYPE_ADDR_SPACE\n\
+(to_type)} only when the latter is @code{ADDR_SPACE_GENERIC}.  The default\n\
+implementation returns @code{TYPE_ADDR_SPACE (to_type)}, leaving the pointer\n\
+in the address space of its target type.",
+ addr_space_t, (tree to_type),
+ default_addr_space_pointer_addr_space)
+
 HOOK_VECTOR_END (addr_space)
 
 #undef HOOK_PREFIX
