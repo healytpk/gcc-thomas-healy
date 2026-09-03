@@ -14437,6 +14437,10 @@ complain_about_incompatible_declspecs (const char *name_a, location_t loc_a,
    declarator, in cases like "struct S;"), or the ERROR_MARK_NODE if an
    error occurs. */
 
+/* True while parsing the body of an "extern noexcept(static) { ... }"
+   region.  Maintained by cp_parser_linkage_specification.  */
+bool noexcept_static_region_p;
+
 tree
 grokdeclarator (const cp_declarator *declarator,
 		cp_decl_specifier_seq *declspecs,
@@ -14531,6 +14535,10 @@ grokdeclarator (const cp_declarator *declarator,
   bool concept_p = decl_spec_seq_has_spec_p (declspecs, ds_concept);
   if (concept_p)
     constexpr_p = true;
+
+  /* Set if a function declarator carried the GNU extension
+     "noexcept (static)".  */
+  bool noexcept_static_p = false;
 
   if (decl_context == FUNCDEF)
     funcdef_flag = true, decl_context = NORMAL;
@@ -15587,6 +15595,26 @@ grokdeclarator (const cp_declarator *declarator,
 	    tree arg_types;
 	    int funcdecl_p;
 
+	    /* GNU extension: "noexcept (static)" is a property of a
+	       function *definition*; a declaration must use plain
+	       "noexcept".  */
+	    if (declarator->u.function.noexcept_static_loc
+		!= UNKNOWN_LOCATION)
+	      {
+		if (funcdef_flag)
+		  noexcept_static_p = true;
+		else
+		  {
+		    auto_diagnostic_group d;
+		    location_t nloc
+		      = declarator->u.function.noexcept_static_loc;
+		    error_at (nloc, "%<noexcept(static)%> is only"
+			      " permitted on a function definition");
+		    inform (nloc, "use %<noexcept%> on the declaration"
+			    " instead");
+		  }
+	      }
+
 	    /* Declaring a function type.  */
 
 	    /* Pick up type qualifiers which should be applied to `this'.  */
@@ -16084,6 +16112,29 @@ grokdeclarator (const cp_declarator *declarator,
 		 The optional attribute-specifier-seq appertains to
 		 the function type.  */
 	      cplus_decl_attributes (&type, attrs, 0);
+
+	    /* GNU extension: inside "extern noexcept(static)"
+	       a function declared without an
+	       exception-specification gets one implicitly, and
+	       a definition is checked as well.  This applies
+	       only where a function is actually being declared
+	       by name, not to typedefs, parameters, type-ids or
+	       lambdas.  An explicit specification always wins,
+	       so noexcept(false) opts out.  */
+	    if (raises == NULL_TREE
+		&& noexcept_static_region_p
+		&& funcdecl_p
+		&& !typedef_p
+		&& decl_context != TYPENAME
+		&& decl_context != PARM
+		&& decl_context != CATCHPARM
+		&& !(current_class_type
+		     && LAMBDA_TYPE_P (current_class_type)))
+	      {
+		raises = noexcept_true_spec;
+		if (funcdef_flag)
+		  noexcept_static_p = true;
+	      }
 
 	    if (raises)
 	      type = build_exception_variant (type, raises);
@@ -17607,6 +17658,13 @@ grokdeclarator (const cp_declarator *declarator,
 	   if initializer needs runtime initialization.  */
 	&& (!VAR_P (decl) || !DECL_TEMPLATE_INSTANTIATED (decl)))
       cp_apply_type_quals_to_decl (type_quals, decl);
+
+    /* GNU extension: remember "noexcept (static)" so that
+       finish_function can check the body once it is parsed.  */
+    if (noexcept_static_p
+	&& TREE_CODE (decl) == FUNCTION_DECL
+	&& DECL_LANG_SPECIFIC (decl))
+      DECL_NOEXCEPT_STATIC_P (decl) = 1;
 
     return decl;
   }
@@ -21383,6 +21441,25 @@ finish_function (bool inline_p)
       && !processing_template_decl
       && !DECL_CLONED_FUNCTION_P (fndecl))
     do_warn_unused_parameter (fndecl);
+
+  /* GNU extension: a function defined with "noexcept (static)"
+     must be provably non-throwing.  A template is checked when it
+     is instantiated, reading the flag off the pattern.  */
+  if (!processing_template_decl && DECL_LANG_SPECIFIC (fndecl))
+    {
+      bool noexcept_static = DECL_NOEXCEPT_STATIC_P (fndecl);
+      if (!noexcept_static && DECL_TEMPLATE_INFO (fndecl))
+	{
+	  tree tmpl = DECL_TI_TEMPLATE (fndecl);
+	  tree pat = (tmpl && TREE_CODE (tmpl) == TEMPLATE_DECL
+		      ? DECL_TEMPLATE_RESULT (tmpl) : NULL_TREE);
+	  if (pat && TREE_CODE (pat) == FUNCTION_DECL
+	      && DECL_LANG_SPECIFIC (pat))
+	    noexcept_static = DECL_NOEXCEPT_STATIC_P (pat);
+	}
+      if (noexcept_static)
+	check_noexcept_static_body (fndecl);
+    }
 
   /* Genericize before inlining.  */
   if (!processing_template_decl

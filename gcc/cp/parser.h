@@ -359,6 +359,13 @@ struct GTY(()) cp_parser {
      alternatives.  */
   bool in_type_id_in_expr_p;
 
+  /* If the noexcept-specifier most recently parsed by
+     cp_parser_noexcept_specification_opt was the GNU extension
+     "noexcept (static)", the location of its "noexcept" keyword;
+     otherwise UNKNOWN_LOCATION.  Only meaningful immediately after
+     that call.  */
+  location_t noexcept_static_loc;
+
   /* TRUE if strings in expressions should be translated to the execution
      character set.  */
   bool translate_strings_p;

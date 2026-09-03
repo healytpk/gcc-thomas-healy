@@ -1397,4 +1397,208 @@ maybe_splice_retval_cleanup (tree compound_stmt, bool is_try)
     }
 }
 
+/* Data passed through cp_walk_tree by check_noexcept_static_body.  */
+
+struct noexcept_static_info
+{
+  tree fndecl;
+  bool errored;
+};
+
+/* True if HANDLERS, the handler list of a TRY_BLOCK, contains a catch-all
+   handler.  Only "catch (...)" counts: a typed handler cannot be shown
+   statically to match whatever the try-block might throw.  */
+
+static bool
+has_catch_all_handler_p (tree handlers)
+{
+  if (handlers == NULL_TREE)
+    return false;
+
+  if (TREE_CODE (handlers) == HANDLER)
+    return HANDLER_TYPE (handlers) == NULL_TREE;
+
+  if (TREE_CODE (handlers) == STATEMENT_LIST)
+    for (tree_stmt_iterator i = tsi_start (handlers); !tsi_end_p (i);
+	 tsi_next (&i))
+      {
+	tree h = tsi_stmt (i);
+	if (TREE_CODE (h) == HANDLER && HANDLER_TYPE (h) == NULL_TREE)
+	  return true;
+      }
+
+  return false;
+}
+
+/* Callback for cp_walk_tree.  Diagnose potentially-throwing constructs in
+   the body of a function defined "noexcept (static)".  The notion of
+   "potentially throwing" is the same one check_noexcept_r uses for the
+   noexcept operator.  */
+
+static tree
+check_noexcept_static_r (tree *tp, int *walk_subtrees, void *data_)
+{
+  noexcept_static_info *info = (noexcept_static_info *) data_;
+  tree t = *tp;
+  enum tree_code code = TREE_CODE (t);
+
+  if (unevaluated_p (code))
+    {
+      *walk_subtrees = 0;
+      return NULL_TREE;
+    }
+
+  switch (code)
+    {
+    case FUNCTION_DECL:
+    case LAMBDA_EXPR:
+    case TYPE_DECL:
+      /* The bodies of nested functions, lambdas and local classes are
+	 checked when they are themselves finished.  */
+      *walk_subtrees = 0;
+      return NULL_TREE;
+
+    case MUST_NOT_THROW_EXPR:
+      /* A must-not-throw region calls terminate rather than propagating,
+	 so nothing escapes it and there is nothing to diagnose inside --
+	 with one exception.  begin_eh_spec_block wraps the whole body of a
+	 function with a non-throwing exception specification in one of
+	 these, and since noexcept(static) implies noexcept, that region is
+	 precisely the body we were asked to check.  */
+      if (!MUST_NOT_THROW_NOEXCEPT_P (t))
+	*walk_subtrees = 0;
+      return NULL_TREE;
+
+    case THROW_EXPR:
+      error_at (cp_expr_loc_or_input_loc (t),
+		"%<throw%> in function %qD defined %<noexcept(static)%>",
+		info->fndecl);
+      info->errored = true;
+      *walk_subtrees = 0;
+      return NULL_TREE;
+
+    case TRY_BLOCK:
+      /* A catch-all handler stops anything the try-block throws, so only
+	 the handlers themselves have to be checked.  The exception is the
+	 function-try-block of a constructor or destructor: reaching the end
+	 of one of those handlers rethrows ([except.handle]), so nothing is
+	 stopped and the whole thing must be checked.  */
+      if (has_catch_all_handler_p (TRY_HANDLERS (t))
+	  && !(FN_TRY_BLOCK_P (t)
+	       && (DECL_CONSTRUCTOR_P (info->fndecl)
+		   || DECL_DESTRUCTOR_P (info->fndecl))))
+	{
+	  *walk_subtrees = 0;
+	  cp_walk_tree_without_duplicates (&TRY_HANDLERS (t),
+					   check_noexcept_static_r, info);
+	}
+      return NULL_TREE;
+
+    case AGGR_INIT_EXPR:
+      break;
+
+    case CALL_EXPR:
+      if (!CALL_EXPR_FN (t))
+	return NULL_TREE;
+      break;
+
+    default:
+      return NULL_TREE;
+    }
+
+  /* A call.  It is acceptable only if the callee cannot throw.  */
+  tree fn = cp_get_callee (t);
+  if (fn == NULL_TREE)
+    return NULL_TREE;
+
+  tree callee = fn;
+  STRIP_NOPS (callee);
+  if (TREE_CODE (callee) == ADDR_EXPR)
+    callee = TREE_OPERAND (callee, 0);
+
+  /* The cleanup at the end of a handler is compiler-generated: it calls
+     __cxa_end_catch to destroy the exception object.  do_end_catch leaves
+     that call potentially-throwing whenever the destructor of the caught
+     type cannot be shown to be non-throwing, which for catch(...) is
+     always, since the dynamic type is not known.  There is nothing the
+     user can write to make it safe, so diagnosing it would only make
+     handlers unusable here.  */
+  if (callee == end_catch_fn)
+    return NULL_TREE;
+
+  tree type = TREE_TYPE (fn);
+  if (type && INDIRECT_TYPE_P (type))
+    type = TREE_TYPE (type);
+
+  bool nothrow;
+  if (TREE_CODE (callee) == FUNCTION_DECL)
+    {
+      /* As in check_noexcept_r: ABI internals and C library functions
+	 known not to throw carry that on the decl, not on the type.  */
+      if (DECL_EXTERN_C_P (callee)
+	  && (DECL_ARTIFICIAL (callee) || nothrow_libfn_p (callee)))
+	nothrow = TREE_NOTHROW (callee);
+      else
+	{
+	  /* An implicitly declared special member function may still
+	     have a deferred noexcept-specification, which nothrow_spec_p
+	     asserts against.  */
+	  maybe_instantiate_noexcept (callee, tf_warning_or_error);
+	  nothrow = TYPE_NOTHROW_P (TREE_TYPE (callee));
+	}
+    }
+  else
+    nothrow = (type
+	       && FUNC_OR_METHOD_TYPE_P (type)
+	       && !DEFERRED_NOEXCEPT_SPEC_P (TYPE_RAISES_EXCEPTIONS (type))
+	       && TYPE_NOTHROW_P (type));
+
+  if (nothrow)
+    return NULL_TREE;
+
+  location_t loc = cp_expr_loc_or_input_loc (t);
+  auto_diagnostic_group d;
+  if (TREE_CODE (callee) == FUNCTION_DECL)
+    {
+      /* Outside a template a throw-expression has already been lowered to
+	 a call to __cxa_throw or __cxa_rethrow; report it as a throw
+	 rather than as a call to a library function.  */
+      tree name = DECL_NAME (callee);
+      if (name
+	  && (id_equal (name, "__cxa_throw")
+	      || id_equal (name, "__cxa_rethrow")))
+	error_at (loc, "%<throw%> in function %qD defined "
+		  "%<noexcept(static)%>", info->fndecl);
+      else
+	{
+	  error_at (loc, "call to %qD, which is not %<noexcept%>, in "
+		    "function %qD defined %<noexcept(static)%>",
+		    callee, info->fndecl);
+	  inform (DECL_SOURCE_LOCATION (callee), "%qD declared here", callee);
+	}
+    }
+  else
+    error_at (loc, "call through %qT, which is not %<noexcept%>, in "
+	      "function %qD defined %<noexcept(static)%>",
+	      TREE_TYPE (fn), info->fndecl);
+
+  info->errored = true;
+  return NULL_TREE;
+}
+
+/* FNDECL was defined with the GNU extension "noexcept (static)".  Issue an
+   error for every construct in its body that could throw an exception.  */
+
+void
+check_noexcept_static_body (tree fndecl)
+{
+  tree body = DECL_SAVED_TREE (fndecl);
+
+  if (!flag_exceptions || body == NULL_TREE || body == error_mark_node)
+    return;
+
+  noexcept_static_info info = { fndecl, false };
+  cp_walk_tree_without_duplicates (&body, check_noexcept_static_r, &info);
+}
+
 #include "gt-cp-except.h"

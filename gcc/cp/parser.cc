@@ -2071,6 +2071,7 @@ make_call_declarator (cp_declarator *target,
   declarator->u.function.ref_qualifier = ref_qualifier;
   declarator->u.function.tx_qualifier = tx_qualifier;
   declarator->u.function.exception_specification = exception_specification;
+  declarator->u.function.noexcept_static_loc = UNKNOWN_LOCATION;
   declarator->u.function.late_return_type = late_return_type;
   declarator->u.function.requires_clause = requires_clause;
   declarator->u.function.contract_specifiers = contract_specifiers;
@@ -13542,6 +13543,9 @@ cp_parser_lambda_declarator_opt (cp_parser* parser, tree lambda_expr,
   tree std_attrs = NULL_TREE;
   tree gnu_attrs = NULL_TREE;
   tree exception_spec = NULL_TREE;
+  /* Location of the "noexcept" keyword if the lambda was written
+     "noexcept (static)", otherwise UNKNOWN_LOCATION.  */
+  location_t noexcept_static_loc = UNKNOWN_LOCATION;
   tree template_param_list = NULL_TREE;
   tree tx_qual = NULL_TREE;
   tree return_type = NULL_TREE;
@@ -13766,6 +13770,7 @@ cp_parser_lambda_declarator_opt (cp_parser* parser, tree lambda_expr,
   /* Parse optional exception specification.  */
   exception_spec
     = cp_parser_exception_specification_opt (parser, CP_PARSER_FLAGS_NONE);
+  noexcept_static_loc = parser->noexcept_static_loc;
 
   if (omitted_parms_loc && exception_spec)
     {
@@ -13870,6 +13875,7 @@ cp_parser_lambda_declarator_opt (cp_parser* parser, tree lambda_expr,
 				       contract_specifiers,
 				       std_attrs,
 				       UNKNOWN_LOCATION);
+    declarator->u.function.noexcept_static_loc = noexcept_static_loc;
 
     fco = grokmethod (&return_type_specs,
 		      declarator,
@@ -18074,9 +18080,14 @@ cp_parser_declaration (cp_parser* parser, tree prefix_attrs)
     }
 
   /* If the next token is `extern' and the following token is a string
-     literal, then we have a linkage specification.  */
+     literal, then we have a linkage specification.  The GNU
+     extension "extern noexcept(static)" comes here too.  */
   if (token1->keyword == RID_EXTERN
-      && cp_parser_is_pure_string_literal (token2))
+      && (cp_parser_is_pure_string_literal (token2)
+	  || token2->keyword == RID_NOEXCEPT
+	  || (token2->type == CPP_NOT
+	      && cp_lexer_nth_token_is_keyword (parser->lexer, 3,
+						RID_NOEXCEPT))))
     cp_parser_linkage_specification (parser, attributes);
   /* If the next token is `template', then we have either a template
      declaration, an explicit instantiation, or an explicit
@@ -19674,11 +19685,49 @@ cp_parser_function_specifier_opt (cp_parser* parser,
   return cp_lexer_consume_token (parser->lexer)->u.value;
 }
 
+/* If the next tokens are "noexcept ( static )", or that sequence with a
+   leading "!", consume them, set *NOEXCEPT_STATIC accordingly and return
+   true.  Otherwise return false and leave *NOEXCEPT_STATIC alone, so that
+   an extern-declaration region with no specifier of its own inherits the
+   enclosing one.  */
+
+static bool
+cp_parser_noexcept_static_opt (cp_parser *parser, bool *noexcept_static)
+{
+  /* A leading "!" turns the region back off.  */
+  const bool negated = cp_lexer_next_token_is (parser->lexer, CPP_NOT);
+  const size_t n = negated ? 1 : 0;
+
+  if (!cp_lexer_nth_token_is_keyword (parser->lexer, n + 1, RID_NOEXCEPT)
+      || !cp_lexer_nth_token_is (parser->lexer, n + 2, CPP_OPEN_PAREN)
+      || !cp_lexer_nth_token_is_keyword (parser->lexer, n + 3, RID_STATIC)
+      || !cp_lexer_nth_token_is (parser->lexer, n + 4, CPP_CLOSE_PAREN))
+    return false;
+
+  for (size_t i = 0; i < n + 4; ++i)
+    cp_lexer_consume_token (parser->lexer);
+
+  *noexcept_static = !negated;
+  return true;
+}
+
 /* Parse a linkage-specification.
 
    linkage-specification:
      extern string-literal { declaration-seq [opt] }
-     extern string-literal name-declaration  */
+     extern string-literal name-declaration
+
+   GNU extension:
+     extern noexcept (static) { declaration-seq [opt] }
+     extern string-literal noexcept (static) { declaration-seq [opt] }
+     extern ! noexcept (static) { declaration-seq [opt] }
+     extern string-literal ! noexcept (static) { declaration-seq [opt] }
+
+   Every function declared in a noexcept(static) region is implicitly
+   noexcept, and every function defined in it is implicitly
+   noexcept(static).  A region with no specifier inherits whatever it is
+   nested in; "!noexcept(static)" is how you turn it back off, so that a
+   header included inside such a region can exempt itself.  */
 
 static void
 cp_parser_linkage_specification (cp_parser* parser, tree prefix_attr)
@@ -19687,33 +19736,50 @@ cp_parser_linkage_specification (cp_parser* parser, tree prefix_attr)
   cp_token *extern_token
     = cp_parser_require_keyword (parser, RID_EXTERN, RT_EXTERN);
 
-  /* Look for the string-literal.  */
-  cp_token *string_token = cp_lexer_peek_token (parser->lexer);
-  tree linkage;
-  if (cxx_dialect >= cxx26)
-    linkage = cp_parser_unevaluated_string_literal (parser);
-  else
-    linkage = cp_parser_string_literal (parser, /*translate=*/false,
-					/*wide_ok=*/false);
+  /* GNU extension: the string-literal is omitted in
+     "extern noexcept(static) { ... }".  A region with no specifier of
+     its own inherits the enclosing one.  */
+  bool noexcept_static_p = noexcept_static_region_p;
+  bool have_noexcept_spec
+    = cp_parser_noexcept_static_opt (parser, &noexcept_static_p);
 
-  /* Transform the literal into an identifier.  If the literal is a
-     wide-character string, or contains embedded NULs, then we can't
-     handle it as the user wants.  */
-  if (linkage == error_mark_node
-      || strlen (TREE_STRING_POINTER (linkage))
-	 != (size_t) (TREE_STRING_LENGTH (linkage) - 1))
+  /* Look for the string-literal.  */
+  cp_token *string_token = extern_token;
+  tree linkage = lang_name_cplusplus;
+  if (!have_noexcept_spec)
     {
-      cp_parser_error (parser, "invalid linkage-specification");
-      /* Assume C++ linkage.  */
-      linkage = lang_name_cplusplus;
+      string_token = cp_lexer_peek_token (parser->lexer);
+      if (cxx_dialect >= cxx26)
+	linkage = cp_parser_unevaluated_string_literal (parser);
+      else
+	linkage = cp_parser_string_literal (parser, /*translate=*/false,
+					    /*wide_ok=*/false);
+
+      /* Transform the literal into an identifier.  If the literal is a
+	 wide-character string, or contains embedded NULs, then we can't
+	 handle it as the user wants.  */
+      if (linkage == error_mark_node
+	  || strlen (TREE_STRING_POINTER (linkage))
+	     != (size_t) (TREE_STRING_LENGTH (linkage) - 1))
+	{
+	  cp_parser_error (parser, "invalid linkage-specification");
+	  /* Assume C++ linkage.  */
+	  linkage = lang_name_cplusplus;
+	}
+      else
+	linkage = get_identifier (TREE_STRING_POINTER (linkage));
+
+      /* The specifier may also follow the string, as in
+	 extern "C" noexcept(static) { ... }.  */
+      cp_parser_noexcept_static_opt (parser, &noexcept_static_p);
     }
-  else
-    linkage = get_identifier (TREE_STRING_POINTER (linkage));
 
   /* We're now using the new linkage.  */
   unsigned saved_module = module_kind;
   module_kind &= ~MK_ATTACH;
   push_lang_context (linkage);
+  bool saved_noexcept_static_region_p = noexcept_static_region_p;
+  noexcept_static_region_p = noexcept_static_p;
 
   /* Preserve the location of the innermost linkage specification,
      tracking the locations of nested specifications via a local.  */
@@ -19758,6 +19824,7 @@ cp_parser_linkage_specification (cp_parser* parser, tree prefix_attr)
     }
 
   /* We're done with the linkage-specification.  */
+  noexcept_static_region_p = saved_noexcept_static_region_p;
   pop_lang_context ();
   module_kind = saved_module;
 
@@ -27364,6 +27431,9 @@ cp_parser_direct_declarator (cp_parser* parser,
 		  exception_specification
 		    = cp_parser_exception_specification_opt (parser,
 							     flags);
+		  /* Remember whether it was the GNU "noexcept (static)".  */
+		  const location_t noexcept_static_loc
+		    = parser->noexcept_static_loc;
 
 		  attrs = cp_parser_std_attribute_spec_seq (parser);
 
@@ -27413,6 +27483,8 @@ cp_parser_direct_declarator (cp_parser* parser,
 						     contract_specifiers,
 						     attrs,
 						     parens_loc);
+		  declarator->u.function.noexcept_static_loc
+		    = noexcept_static_loc;
 		  declarator->attributes = gnu_attrs;
 		  declarator->parameter_pack_p |= pack_expansion_p;
 		  /* Any subsequent parameter lists are to do with
@@ -32813,6 +32885,9 @@ cp_parser_noexcept_specification_opt (cp_parser* parser,
   cp_token *token;
   const char *saved_message;
 
+  /* Assume this is not the GNU "noexcept (static)" extension.  */
+  parser->noexcept_static_loc = UNKNOWN_LOCATION;
+
   /* Peek at the next token.  */
   token = cp_lexer_peek_token (parser->lexer);
 
@@ -32820,6 +32895,29 @@ cp_parser_noexcept_specification_opt (cp_parser* parser,
   if (cp_parser_is_keyword (token, RID_NOEXCEPT))
     {
       tree expr;
+
+      /* GNU extension: "noexcept (static)" means "noexcept (true)" plus
+	 a request that the body be checked for potentially-throwing
+	 statements.  Recognize it here, before the deferred-parsing
+	 path for class members below.  */
+      if (cp_lexer_nth_token_is (parser->lexer, 2, CPP_OPEN_PAREN)
+	  && cp_lexer_nth_token_is_keyword (parser->lexer, 3, RID_STATIC)
+	  && cp_lexer_nth_token_is (parser->lexer, 4, CPP_CLOSE_PAREN))
+	{
+	  parser->noexcept_static_loc = token->location;
+
+	  cp_lexer_consume_token (parser->lexer);	/* noexcept */
+	  cp_lexer_consume_token (parser->lexer);	/* (        */
+	  cp_lexer_consume_token (parser->lexer);	/* static   */
+	  cp_lexer_consume_token (parser->lexer);	/* )        */
+
+	  if (!require_constexpr)
+	    *consumed_expr = true;
+	  if (return_cond)
+	    return boolean_true_node;
+	  return build_noexcept_spec (boolean_true_node,
+				      tf_warning_or_error);
+	}
 
       /* [class.mem]/6 says that a noexcept-specifier (within the
 	 member-specification of the class) is a complete-class context of
