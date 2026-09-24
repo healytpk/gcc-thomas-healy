@@ -12,6 +12,6 @@ f (int *p)
   return *p;
 }
 
-/* { dg-final { scan-assembler "__nullex_abi_v1" } } */
+/* { dg-final { scan-assembler "__nullex_abi_v1_link_with_m64nullex" } } */
 /* { dg-final { scan-assembler "\\.rodata\\.__nullex_abi_ref,\"aGR\"" } } */
 /* { dg-final { scan-assembler-not "__nullex_abi_ref\[^\n\]*\"aG\"" } } */

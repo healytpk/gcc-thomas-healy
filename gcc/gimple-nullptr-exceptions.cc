@@ -479,16 +479,24 @@ nullex_rewrite_initializer (tree decl)
    property note and a linker willing to reject a mismatch instead of
    merging it, which is not something the compiler can do alone.
 
+   The marker follows the instrumentation, not the multilib.  A unit built
+   for the ABI but with the checks turned off calls nothing in the nullex
+   runtime and hands back no stub address, so it has no dependency to
+   assert, and asserting one anyway would be wrong: libgcc's crtstuff is
+   compiled -fno-exceptions and is linked into every program, so keying the
+   marker on the multilib alone made even a pure C link demand the C++
+   runtime.
+
    The reference is one COMDAT pointer for the whole program, and is marked
    preserved so that --gc-sections cannot drop it and with it the check.  */
 
 void
 nullex_emit_abi_marker (void)
 {
-  if (!flag_nullex_abi)
+  if (!flag_nullex_abi || !flag_nullptr_exceptions)
     return;
 
-  tree tag_id = get_identifier ("__nullex_abi_v1");
+  tree tag_id = get_identifier ("__nullex_abi_v1_link_with_m64nullex");
   tree tag = build_decl (BUILTINS_LOCATION, VAR_DECL, tag_id,
 			 char_type_node);
   TREE_PUBLIC (tag) = 1;

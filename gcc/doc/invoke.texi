@@ -37638,12 +37638,28 @@ The exception runtime itself, @file{libsupc++}, is compiled with
 @option{-fno-nullptr-exceptions} even in this multilib, so that the code
 raising the exception cannot re-enter itself.
 
-Every object compiled for this ABI carries a reference to a symbol that
-only this ABI's @file{libstdc++} defines, so linking such objects against
-the ordinary runtime fails at link time instead of producing a program in
-which one function has two addresses.  The reference is one retained word
-for the whole program, retained so that @option{--gc-sections} cannot
-discard it and the check with it.
+The multilib this option selects is built unconditionally on the targets
+that support it, whatever @option{--with-multilib-list} asked for, so no
+particular configuration is needed to use it; the rest of that list is
+left exactly as given, so no other ABI is dragged in.  A compiler built
+with @option{--disable-multilib}, or for a target without it, says so
+rather than leaving an undefined symbol to be discovered at link time.
+
+Every object the checks are compiled into carries a reference to
+@code{__nullex_abi_v1_link_with_m64nullex}, which only this ABI's
+@file{libstdc++} defines, so linking such objects against the ordinary
+runtime fails at link time instead of producing a program in which one
+function has two addresses.  The symbol is named for what to do about it,
+since a linker reports an unresolved reference by name and has nothing
+else to say.  It is one retained word for the whole program, retained so
+that @option{--gc-sections} cannot discard it and the check with it.
+
+Adding @option{-fno-nullptr-exceptions} to this ABI leaves the reference
+out along with the checks, since such an object calls nothing in that
+runtime and takes no checked entry point's address.  That is how the
+pieces of the runtime that cannot use the checks opt out: @file{libgcc}
+and its @file{crtstuff} are built this way, and a C program that asks for
+the same thing links without pulling in @file{libstdc++}.
 
 That catches compiling one way and linking the other, which is the mistake
 that happens in practice.  It does not catch an ordinary @option{-m64}
@@ -37654,7 +37670,11 @@ variant in the ELF header -- ARM's float ABI, for one -- already refuses a
 mismatch.  The compiler can emit such a note; only the linker can refuse
 the link.
 
-The macro @code{__NULLEX_ABI__} is defined when this ABI is in effect.
+The macro @code{__NULLEX_ABI__} is defined when this ABI is in effect.  It
+follows the ABI rather than the checks, so it stays defined under
+@option{-fno-nullptr-exceptions}; that is what lets the runtime built for
+this multilib define the marker symbol whether or not its own translation
+units are instrumented.
 
 @opindex miamcu
 @opindex mno-iamcu

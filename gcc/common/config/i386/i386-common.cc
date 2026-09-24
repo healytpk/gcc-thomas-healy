@@ -27,6 +27,13 @@ along with GCC; see the file COPYING3.  If not see
 #include "common/common-target.h"
 #include "common/common-target-def.h"
 #include "opts.h"
+
+/* Set by config.gcc when m64nullex is in the multilib list.  Defined
+   unconditionally so the diagnostic below is always compiled, whatever
+   the configuration.  */
+#ifndef TARGET_NULLEX_MULTILIB
+#define TARGET_NULLEX_MULTILIB 0
+#endif
 #include "flags.h"
 
 /* Define a set of ISAs which are available when a given ISA is
@@ -445,6 +452,14 @@ ix86_handle_option (struct gcc_options *opts,
 	 the exception runtime itself opts out.  */
       if (value)
 	{
+	  /* The multilib is built unconditionally on the targets that have
+	     it, so reaching this means either --disable-multilib or a
+	     target that does not.  Either way there is no runtime to link
+	     against, and the only other sign of it would be an undefined
+	     reference to the ABI marker at link time.  */
+	  if (!TARGET_NULLEX_MULTILIB)
+	    error_at (loc, "%<-m64nullex%> is not available: this compiler "
+		      "was built without the %<m64nullex%> multilib");
 	  opts->x_ix86_isa_flags |= OPTION_MASK_ISA_64BIT | OPTION_MASK_ABI_64;
 	  opts->x_ix86_isa_flags &= ~(OPTION_MASK_ABI_X32 | OPTION_MASK_CODE16);
 	  if (!opts_set->x_flag_nullptr_exceptions)

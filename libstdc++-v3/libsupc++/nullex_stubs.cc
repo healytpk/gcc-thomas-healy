@@ -73,7 +73,7 @@ extern "C"
 // compiled for the ABI carries a reference to it, so linking those objects
 // against the ordinary runtime fails here, rather than producing a program
 // in which one function has two addresses that compare unequal.
-char __nullex_abi_v1 = 1;
+char __nullex_abi_v1_link_with_m64nullex = 1;
 #endif
 
 // --- <string.h>: the size-gated group ------------------------------------
