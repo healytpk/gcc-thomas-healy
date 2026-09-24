@@ -953,6 +953,26 @@ c_common_post_options (const char **pfilename)
   if (flag_objc_exceptions && !flag_objc_sjlj_exceptions)
     flag_exceptions = 1;
 
+  /* -fnullptr-exceptions needs the unwinder, which for C means turning on
+     exception handling that the language does not otherwise have.  An
+     explicit -fno-exceptions wins: complain only when -fnullptr-exceptions
+     was asked for explicitly as well.  When it arrived implicitly, from an
+     ABI option such as -m64nullex, it simply switches off, which is how
+     the parts of the runtime built with -fno-exceptions -- crtstuff and
+     the unwinder among them -- opt out without special cases.  */
+  if (flag_nullptr_exceptions)
+    {
+      if (global_options_set.x_flag_exceptions && !flag_exceptions)
+	{
+	  if (global_options_set.x_flag_nullptr_exceptions)
+	    error ("%<-fnullptr-exceptions%> is incompatible with "
+		   "%<-fno-exceptions%>");
+	  flag_nullptr_exceptions = 0;
+	}
+      else
+	flag_exceptions = 1;
+    }
+
   /* If -ffreestanding, -fno-hosted or -fno-builtin then disable
      pattern recognition.  */
   if (flag_no_builtin)

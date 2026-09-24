@@ -31,18 +31,22 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
    When the -shared link option is used a final link is not being
    done.  */
 
+/* -m64nullex selects the same code generation as -m64, so it has to count
+   as 64-bit wherever these specs test for it.  Where SPEC_64 is already
+   written as a negative match it needs no change; the positive forms, and
+   the negative forms of SPEC_32 and SPEC_X32, do.  */
 #if TARGET_64BIT_DEFAULT
 #define SPEC_32 "m16|m32"
 #if TARGET_BI_ARCH == 2
-#define SPEC_64 "m64"
-#define SPEC_X32 "m16|m32|m64:;"
+#define SPEC_64 "m64|m64nullex"
+#define SPEC_X32 "m16|m32|m64|m64nullex:;"
 #else
 #define SPEC_64 "m16|m32|mx32:;"
 #define SPEC_X32 "mx32"
 #endif
 #else
-#define SPEC_32 "m64|mx32:;"
-#define SPEC_64 "m64"
+#define SPEC_32 "m64|m64nullex|mx32:;"
+#define SPEC_64 "m64|m64nullex"
 #define SPEC_X32 "mx32"
 #endif
 

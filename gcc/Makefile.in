@@ -1539,6 +1539,7 @@ OBJS = \
 	gimple-loop-versioning.o \
 	gimple-low.o \
 	gimple-lower-bitint.o \
+	gimple-nullptr-exceptions.o \
 	gimple-predicate-analysis.o \
 	gimple-pretty-print.o \
 	gimple-range.o \

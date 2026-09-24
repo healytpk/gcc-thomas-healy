@@ -244,9 +244,12 @@ endif
 # Options to use when compiling libgcc2.a.
 #
 LIBGCC2_DEBUG_CFLAGS = -g
+# -fno-nullptr-exceptions: libgcc is part of what raises the exception, so
+# it is never instrumented, whatever the multilib was configured with.
 LIBGCC2_CFLAGS = -O2 $(LIBGCC2_INCLUDES) $(GCC_CFLAGS) $(HOST_LIBGCC2_CFLAGS) \
 		 $(LIBGCC2_DEBUG_CFLAGS) -DIN_LIBGCC2 \
 		 -fbuilding-libgcc -fno-stack-protector \
+		 -fno-nullptr-exceptions \
 		 $(INHIBIT_LIBC_CFLAGS)
 
 # Additional options to use when compiling libgcc2.a.

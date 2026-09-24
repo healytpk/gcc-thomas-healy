@@ -81,6 +81,75 @@ namespace std _GLIBCXX_VISIBILITY(default)
 #endif
   };
 
+  /** Thrown by code compiled with @c -fnullptr-exceptions, when a null
+   *  pointer is dereferenced or when a non-zero offset is added to a null
+   *  pointer.
+   *
+   *  The message is a string literal owned by the runtime, so throwing
+   *  this exception allocates nothing.
+   *
+   *  @ingroup exceptions
+   */
+  class nullptr_error : public exception
+  {
+    const char* _M_what;
+
+  public:
+    nullptr_error() _GLIBCXX_USE_NOEXCEPT
+    : _M_what("std::nullptr_error") { }
+
+    explicit
+    nullptr_error(const char* __what) _GLIBCXX_USE_NOEXCEPT
+    : _M_what(__what) { }
+
+    // Out of line, so that this class has a key function and its vtable
+    // and type_info are emitted in the runtime library alone.
+    virtual ~nullptr_error() _GLIBCXX_USE_NOEXCEPT;
+
+    virtual const char*
+    what() const _GLIBCXX_USE_NOEXCEPT;
+  };
+
+  /** Thrown when a null pointer is dereferenced.
+   *
+   *  @ingroup exceptions
+   */
+  class nullptr_dereference : public nullptr_error
+  {
+  public:
+    nullptr_dereference() _GLIBCXX_USE_NOEXCEPT
+    : nullptr_error("nullptr dereference") { }
+
+    virtual ~nullptr_dereference() _GLIBCXX_USE_NOEXCEPT;
+  };
+
+  /** Thrown when a non-zero offset is added to a null pointer.
+   *
+   *  @ingroup exceptions
+   */
+  class nullptr_arithmetic : public nullptr_error
+  {
+  public:
+    nullptr_arithmetic() _GLIBCXX_USE_NOEXCEPT
+    : nullptr_error("nullptr arithmetic") { }
+
+    virtual ~nullptr_arithmetic() _GLIBCXX_USE_NOEXCEPT;
+  };
+
+  /** Thrown when a null pointer is passed to a parameter whose declaration
+   *  marks it nonnull.
+   *
+   *  @ingroup exceptions
+   */
+  class nullptr_argument : public nullptr_error
+  {
+  public:
+    nullptr_argument() _GLIBCXX_USE_NOEXCEPT
+    : nullptr_error("nullptr argument") { }
+
+    virtual ~nullptr_argument() _GLIBCXX_USE_NOEXCEPT;
+  };
+
   /// If you write a replacement %terminate handler, it must be of this type.
   typedef void (*terminate_handler) ();
 

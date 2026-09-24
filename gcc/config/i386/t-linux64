@@ -36,3 +36,7 @@ MULTILIB_DIRNAMES   = $(patsubst m%, %, $(subst /, ,$(MULTILIB_OPTIONS)))
 MULTILIB_OSDIRNAMES = m64=../lib64$(call if_multiarch,:x86_64-linux-gnu)
 MULTILIB_OSDIRNAMES+= m32=$(if $(wildcard $(shell echo $(SYSTEM_HEADER_DIR))/../../usr/lib32),../lib32,../lib)$(call if_multiarch,:i386-linux-gnu)
 MULTILIB_OSDIRNAMES+= mx32=../libx32$(call if_multiarch,:x86_64-linux-gnux32)
+# -m64nullex is the ordinary 64-bit ABI with -fnullptr-exceptions on, so it
+# uses the ordinary 64-bit system libraries; only the libraries GCC builds
+# itself differ, and those get a directory of their own.
+MULTILIB_OSDIRNAMES+= m64nullex=../lib64nullex$(call if_multiarch,:x86_64-linux-gnu)

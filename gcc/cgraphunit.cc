@@ -972,6 +972,12 @@ varpool_node::finalize_decl (tree decl)
 
   if (node->definition)
     return;
+
+  /* Under -fnullptr-exceptions the address of a C library function is the
+     address of its checked entry point, in static data as much as in a
+     statement.  */
+  if (flag_nullptr_exceptions)
+    nullex_rewrite_initializer (decl);
   /* Set definition first before calling notice_global_symbol so that
      it is available to notice_global_symbol.  */
   node->definition = true;
@@ -2566,6 +2572,8 @@ symbol_table::finalize_compilation_unit (void)
      are lazy in clearing these.  */
   current_function_decl = NULL;
   set_cfun (NULL);
+
+  nullex_emit_abi_marker ();
 
   /* Do not skip analyzing the functions if there were errors, we
      miss diagnostics for following functions otherwise.  */

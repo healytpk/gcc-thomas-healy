@@ -20981,10 +20981,15 @@ finish_function (bool inline_p)
       && !DECL_OMP_DECLARE_REDUCTION_P (fndecl))
     cp_genericize (fndecl);
 
-  /* If this function can't throw any exceptions, remember that.  */
+  /* If this function can't throw any exceptions, remember that.  Under
+     -fnullptr-exceptions any dereference can throw, and the checks that
+     make it do so are inserted long after this point, so the front end
+     must not conclude anything here -- exactly as for
+     -fnon-call-exceptions.  */
   if (!processing_template_decl
       && !cp_function_chain->can_throw
       && !flag_non_call_exceptions
+      && !opt_for_fn (fndecl, flag_nullptr_exceptions)
       && !decl_replaceable_p (fndecl,
 			      opt_for_fn (fndecl, flag_semantic_interposition))
       && !lookup_attribute ("noipa", DECL_ATTRIBUTES (fndecl)))

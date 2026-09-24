@@ -742,12 +742,20 @@ COMPILER_AS_FOR_TARGET=@COMPILER_AS_FOR_TARGET@
 COMPILER_LD_FOR_TARGET=@COMPILER_LD_FOR_TARGET@
 COMPILER_NM_FOR_TARGET=@COMPILER_NM_FOR_TARGET@
 
-CFLAGS_FOR_TARGET = @CFLAGS_FOR_TARGET@
+# The target C runtime libraries are part of what raises an exception, so
+# they are never instrumented: -fnullptr-exceptions there would make them
+# depend on a C++ runtime that does not exist until after they are built.
+# libstdc++ uses CXXFLAGS_FOR_TARGET and is instrumented as normal.
+CFLAGS_FOR_TARGET = @CFLAGS_FOR_TARGET@ -fno-nullptr-exceptions
 CXXFLAGS_FOR_TARGET = @CXXFLAGS_FOR_TARGET@
 
 LIBCFLAGS_FOR_TARGET = $(CFLAGS_FOR_TARGET)
 LIBCXXFLAGS_FOR_TARGET = $(CXXFLAGS_FOR_TARGET) -fno-implicit-templates
-LDFLAGS_FOR_TARGET = @LDFLAGS_FOR_TARGET@
+# Target libraries never ask the driver to add the C++ support library:
+# the C runtime libraries do not need it, and libstdc++ already contains
+# it.  Without this the -m64nullex link spec would have each of them try
+# to link a library that is still being built.
+LDFLAGS_FOR_TARGET = @LDFLAGS_FOR_TARGET@ -fno-nullptr-exceptions
 GM2FLAGS_FOR_TARGET = -O2 -g
 GOCFLAGS_FOR_TARGET = -O2 -g
 A68FLAGS_FOR_TARGET = -O2 -g

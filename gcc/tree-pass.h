@@ -358,6 +358,13 @@ extern gimple_opt_pass *make_pass_tsan_O0 (gcc::context *ctxt);
 extern gimple_opt_pass *make_pass_sancov (gcc::context *ctxt);
 extern gimple_opt_pass *make_pass_sancov_O0 (gcc::context *ctxt);
 extern gimple_opt_pass *make_pass_lower_cf (gcc::context *ctxt);
+extern gimple_opt_pass *make_pass_nullptr_exceptions (gcc::context *ctxt);
+/* In gimple-nullptr-exceptions.cc.  Applies to static initializers what
+   the pass applies to statements.  */
+extern void nullex_rewrite_initializer (tree);
+/* Likewise: emits the ABI marker that keeps these objects from linking
+   against the ordinary runtime.  */
+extern void nullex_emit_abi_marker (void);
 extern gimple_opt_pass *make_pass_refactor_eh (gcc::context *ctxt);
 extern gimple_opt_pass *make_pass_lower_eh (gcc::context *ctxt);
 extern gimple_opt_pass *make_pass_lower_eh_dispatch (gcc::context *ctxt);

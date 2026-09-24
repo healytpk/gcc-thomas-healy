@@ -436,6 +436,26 @@ ix86_handle_option (struct gcc_options *opts,
 
   switch (code)
     {
+    case OPT_m64nullex:
+      /* Selects the same code generation as -m64, and additionally turns
+	 on -fnullptr-exceptions.  The multilib built with it is installed
+	 separately, so that libstdc++ and libgcc are available in a form
+	 that unwinds correctly out of a null pointer check.  An explicit
+	 -fno-nullptr-exceptions still wins, in either order, which is how
+	 the exception runtime itself opts out.  */
+      if (value)
+	{
+	  opts->x_ix86_isa_flags |= OPTION_MASK_ISA_64BIT | OPTION_MASK_ABI_64;
+	  opts->x_ix86_isa_flags &= ~(OPTION_MASK_ABI_X32 | OPTION_MASK_CODE16);
+	  if (!opts_set->x_flag_nullptr_exceptions)
+	    opts->x_flag_nullptr_exceptions = 1;
+	  /* Unlike the above, this is not something -fno- can take back: it
+	     records which ABI the object belongs to, and the runtime opting
+	     out of instrumentation does not change that.  */
+	  opts->x_flag_nullex_abi = 1;
+	}
+      return true;
+
     case OPT_mgeneral_regs_only:
       if (value)
 	{
