@@ -27,6 +27,13 @@ along with GCC; see the file COPYING3.  If not see
 #include "common/common-target.h"
 #include "common/common-target-def.h"
 #include "opts.h"
+
+/* Set by config.gcc when m64nullex is in the multilib list.  Defined
+   unconditionally so the diagnostic below is always compiled, whatever
+   the configuration.  */
+#ifndef TARGET_NULLEX_MULTILIB
+#define TARGET_NULLEX_MULTILIB 0
+#endif
 #include "flags.h"
 
 /* Define a set of ISAs which are available when a given ISA is
@@ -436,6 +443,34 @@ ix86_handle_option (struct gcc_options *opts,
 
   switch (code)
     {
+    case OPT_m64nullex:
+      /* Selects the same code generation as -m64, and additionally turns
+	 on -fnullptr-exceptions.  The multilib built with it is installed
+	 separately, so that libstdc++ and libgcc are available in a form
+	 that unwinds correctly out of a null pointer check.  An explicit
+	 -fno-nullptr-exceptions still wins, in either order, which is how
+	 the exception runtime itself opts out.  */
+      if (value)
+	{
+	  /* The multilib is built unconditionally on the targets that have
+	     it, so reaching this means either --disable-multilib or a
+	     target that does not.  Either way there is no runtime to link
+	     against, and the only other sign of it would be an undefined
+	     reference to the ABI marker at link time.  */
+	  if (!TARGET_NULLEX_MULTILIB)
+	    error_at (loc, "%<-m64nullex%> is not available: this compiler "
+		      "was built without the %<m64nullex%> multilib");
+	  opts->x_ix86_isa_flags |= OPTION_MASK_ISA_64BIT | OPTION_MASK_ABI_64;
+	  opts->x_ix86_isa_flags &= ~(OPTION_MASK_ABI_X32 | OPTION_MASK_CODE16);
+	  if (!opts_set->x_flag_nullptr_exceptions)
+	    opts->x_flag_nullptr_exceptions = 1;
+	  /* Unlike the above, this is not something -fno- can take back: it
+	     records which ABI the object belongs to, and the runtime opting
+	     out of instrumentation does not change that.  */
+	  opts->x_flag_nullex_abi = 1;
+	}
+      return true;
+
     case OPT_mgeneral_regs_only:
       if (value)
 	{

@@ -40,3 +40,29 @@ __cxxabiv1::__cxa_bad_typeid ()
 extern "C" void
 __cxxabiv1::__cxa_throw_bad_array_new_length ()
 { _GLIBCXX_THROW_OR_ABORT(std::bad_array_new_length()); }
+
+// Key functions: each emits its class's vtable and type_info here, so that
+// they exist once, in the runtime, rather than in every object that can
+// throw one.
+std::nullptr_error::~nullptr_error () _GLIBCXX_USE_NOEXCEPT { }
+std::nullptr_dereference::~nullptr_dereference () _GLIBCXX_USE_NOEXCEPT { }
+std::nullptr_arithmetic::~nullptr_arithmetic () _GLIBCXX_USE_NOEXCEPT { }
+std::nullptr_argument::~nullptr_argument () _GLIBCXX_USE_NOEXCEPT { }
+
+const char*
+std::nullptr_error::what () const _GLIBCXX_USE_NOEXCEPT
+{ return _M_what; }
+
+// Each entry point throws its own type, so a handler can name the one it
+// cares about; catching std::nullptr_error still catches all three.
+extern "C" void
+__cxxabiv1::__cxa_throw_null_pointer_dereference ()
+{ _GLIBCXX_THROW_OR_ABORT(std::nullptr_dereference()); }
+
+extern "C" void
+__cxxabiv1::__cxa_throw_null_pointer_arithmetic ()
+{ _GLIBCXX_THROW_OR_ABORT(std::nullptr_arithmetic()); }
+
+extern "C" void
+__cxxabiv1::__cxa_throw_null_pointer_argument ()
+{ _GLIBCXX_THROW_OR_ABORT(std::nullptr_argument()); }

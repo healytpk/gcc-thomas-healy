@@ -37,8 +37,24 @@ along with GCC; see the file COPYING3.  If not see
   LINUX_OR_ANDROID_LD (GNU_USER_TARGET_LINK_SPEC, \
 		       GNU_USER_TARGET_LINK_SPEC " " ANDROID_LINK_SPEC)
 
+/* Under -m64nullex a C translation unit can throw, so an executable needs
+   the C++ runtime that raises and propagates the exception, whether or not
+   any C++ was compiled into it.  libstdc++ rather than libsupc++, and only
+   for an executable: the runtime has to be shared, because a process that
+   ends up with more than one copy of the exception machinery cannot
+   propagate an exception across a shared library boundary.  A shared
+   library therefore leaves these symbols undefined and resolves them at
+   load time against the copy the executable brought in.
+
+   An explicit -fno-nullptr-exceptions takes it back out again, which is
+   what lets a runtime library link an executable inside this multilib
+   before libstdc++ exists.  */
+#define X86_NULLEX_LIB_SPEC \
+  "%{m64nullex:%{!fno-nullptr-exceptions:%{!shared:-lstdc++}}} "
+
 #undef  LIB_SPEC
 #define LIB_SPEC \
+  X86_NULLEX_LIB_SPEC \
   LINUX_OR_ANDROID_LD (GNU_USER_TARGET_LIB_SPEC, \
 		    GNU_USER_TARGET_NO_PTHREADS_LIB_SPEC " " ANDROID_LIB_SPEC)
 

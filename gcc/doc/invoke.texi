@@ -806,7 +806,8 @@ Objective-C and Objective-C++ Dialects}.
 @xref{Code Gen Options,,Options for Code Generation Conventions}.
 @gccoptlist{-fcall-saved-@var{reg}  -fcall-used-@var{reg}
 -ffixed-@var{reg}  -fexceptions
--fnon-call-exceptions  -fdelete-dead-exceptions  -funwind-tables
+-fnon-call-exceptions  -fnullptr-exceptions
+-fdelete-dead-exceptions  -funwind-tables
 -fasynchronous-unwind-tables
 -fno-gnu-unique
 -finhibit-size-directive  -fcommon  -fno-ident
@@ -1565,7 +1566,8 @@ See RS/6000 and PowerPC Options.
 -mpc32  -mpc64  -mpc80  -mdaz-ftz  -mstackrealign  -mstack-arg-probe
 -momit-leaf-frame-pointer  -mno-red-zone  -mno-tls-direct-seg-refs
 -mcmodel=@var{code-model}  -mabi=@var{name}  -maddress-mode=@var{mode}
--m32  -m64  -mx32  -m16  -miamcu  -mlarge-data-threshold=@var{num}
+-m32  -m64  -mx32  -m16  -m64nullex  -miamcu
+-mlarge-data-threshold=@var{num}
 -msse2avx  -mfentry  -mrecord-mcount  -mnop-mcount  -m8bit-idiv
 -minstrument-return=@var{type}  -mrecord-return
 -mfentry-name=@var{name}  -mfentry-section=@var{name}
@@ -19309,6 +19311,83 @@ instructions to throw exceptions, i.e.@: memory references or floating-point
 instructions.  It does not allow exceptions to be thrown from
 arbitrary signal handlers such as @code{SIGALRM}.  This enables
 @option{-fexceptions}.
+
+@opindex fnullptr-exceptions
+@opindex fno-nullptr-exceptions
+@item -fnullptr-exceptions
+Throw an exception when a null pointer is dereferenced, and when a
+non-zero offset is added to a null pointer.
+
+Three types are thrown, so that a handler can name the situation it cares
+about: @code{std::nullptr_dereference}, @code{std::nullptr_arithmetic} and
+@code{std::nullptr_argument}.  All three derive from
+@code{std::nullptr_error}, which derives from @code{std::exception}, so a
+handler for either of those catches all of them.  @code{what()} returns
+@samp{nullptr dereference}, @samp{nullptr arithmetic} and @samp{nullptr
+argument} respectively; the string is a literal owned by the runtime, so
+throwing allocates nothing.
+
+Every dereference of a pointer that the compiler cannot prove non-null is
+preceded by a test against the null pointer, so this option has a runtime
+cost roughly comparable to @option{-fsanitize=null}.  Unlike that option,
+the check reports by throwing, which means the exception unwinds the stack
+normally: C++ destructors and @code{cleanup} handlers between the throw
+and the handler run as they would for any other exception.
+
+A null pointer passed to a parameter that the callee's declaration marks
+@code{nonnull} throws as well, and that test is placed in the caller,
+before the call.  This is what covers the C library: @code{strcpy} is
+declared @code{nonnull (1, 2)}, so @code{strcpy (0, s)} throws against an
+ordinary, unmodified system C library, whose string routines are
+hand-written assembly that could be neither instrumented nor thrown out
+of.  Where the attribute makes non-nullness conditional on another
+argument, as it does for @code{memcpy}, that condition is honored, so
+@code{memcpy (0, 0, 0)} does not throw.  Functions that accept a null
+pointer, @code{free} among them, carry no such attribute and are
+unaffected.
+
+Taking the address of one of these functions, rather than calling it,
+yields the address of a checked entry point in the runtime.  The check
+cannot be left at the call site in that case, because the pointer may be
+called from anywhere, including from code this compiler never saw.  There
+is one definition of each entry point, so two translation units taking the
+same address still compare equal, and the rule is read off the declaration,
+so they also agree about which functions are affected.  Only C library
+functions are treated this way: a function compiled as part of the program
+already checks inside its own body, and giving it a second entry point
+would change its address for no gain.  The same substitution is made in
+static initializers, so the meaning of @code{&strcpy} does not depend on
+whether it was written at file scope or inside a function.
+
+A consequence worth stating plainly: under this option the address of
+@code{strcpy} is not the address the same expression yields without it.
+Objects compiled with and without the option therefore disagree about
+function identity, and nothing at link time detects the mismatch.  This is
+what @option{-m64nullex} exists to keep apart.
+
+A null pointer that reaches a library by some other route is still not
+diagnosed: a null @code{FILE *} field, or a null callback handed to
+@code{qsort}, will fault as it does today.  Nor is a call through a null
+function pointer, nor a pointer obtained from @code{dlsym}, which returns
+the library's own symbol rather than the checked entry point.
+
+Adding zero to a null pointer is well defined in C++ and in C23, so it is
+permitted and does not throw.
+
+This option enables @option{-fexceptions}, including for C, where the
+language has no @code{catch} of its own: an exception thrown in C unwinds
+through C frames, running their @code{cleanup} handlers, and can be caught
+by a C++ frame further up the stack.  Because the exception object and the
+entry points that throw it live in the C++ runtime, a program compiled
+this way must be linked against @option{-lstdc++}; the @command{g++} driver
+does this already, and @option{-m64nullex} arranges it for C.
+
+A dereference in a function marked @code{noexcept} calls
+@code{std::terminate}, as any other throw from such a function does.
+
+This option also disables @option{-fdelete-null-pointer-checks}, since
+otherwise the non-null range the compiler infers from a dereference would
+let it fold away the very tests this option inserts.
 
 @opindex fdelete-dead-exceptions
 @opindex fno-delete-dead-exceptions
@@ -37521,6 +37600,81 @@ generates code for the x86-64 architecture.
 The @option{-m16} option is the same as @option{-m32}, except for that
 it outputs the @code{.code16gcc} assembly directive at the beginning of
 the assembly output so that the binary can run in 16-bit mode.
+
+@opindex m64nullex
+@item -m64nullex
+Generate code as @option{-m64} does, and in addition enable
+@option{-fnullptr-exceptions}.  The calling convention, struct layout and
+name mangling are unchanged, but the two are not interchangeable: the
+address of a C library function differs between them, because
+@option{-fnullptr-exceptions} substitutes a checked entry point for it.
+Mixing objects compiled the two ways yields a program in which one
+function has two addresses that compare unequal, and in which an exception
+can unwind through frames that registered no cleanups.  Nothing at link
+time detects the mismatch, so the separate name, and the separate library
+directory that goes with it, are what keep the two apart.
+
+@command{gcc} links against copies of @file{libgcc} and @file{libstdc++}
+built with the option, installed in @file{lib64nullex} rather than
+@file{lib64}.
+
+That matters because the option implies @option{-fexceptions}.  A
+translation unit compiled without it has no cleanup handlers for the
+unwinder to run, so an exception passing through such a frame skips them
+silently.  The system C library is a deliberate exception to this: it is
+not rebuilt and does not need to be, because a null pointer passed to one
+of its functions is caught in the caller.  See
+@option{-fnullptr-exceptions}.
+
+Linking an executable adds @option{-lstdc++}, so a C program gets the
+runtime that raises and propagates the exception without having to ask for
+it.  Linking a shared library does not: the runtime has to be shared
+across a process, since more than one copy of the exception machinery
+prevents an exception crossing a shared library boundary, so a shared
+library leaves these symbols undefined and resolves them at load time
+against the copy the executable brought in.
+
+The exception runtime itself, @file{libsupc++}, is compiled with
+@option{-fno-nullptr-exceptions} even in this multilib, so that the code
+raising the exception cannot re-enter itself.
+
+The multilib this option selects is built unconditionally on the targets
+that support it, whatever @option{--with-multilib-list} asked for, so no
+particular configuration is needed to use it; the rest of that list is
+left exactly as given, so no other ABI is dragged in.  A compiler built
+with @option{--disable-multilib}, or for a target without it, says so
+rather than leaving an undefined symbol to be discovered at link time.
+
+Every object the checks are compiled into carries a reference to
+@code{__nullex_abi_v1_link_with_m64nullex}, which only this ABI's
+@file{libstdc++} defines, so linking such objects against the ordinary
+runtime fails at link time instead of producing a program in which one
+function has two addresses.  The symbol is named for what to do about it,
+since a linker reports an unresolved reference by name and has nothing
+else to say.  It is one retained word for the whole program, retained so
+that @option{--gc-sections} cannot discard it and the check with it.
+
+Adding @option{-fno-nullptr-exceptions} to this ABI leaves the reference
+out along with the checks, since such an object calls nothing in that
+runtime and takes no checked entry point's address.  That is how the
+pieces of the runtime that cannot use the checks opt out: @file{libgcc}
+and its @file{crtstuff} are built this way, and a C program that asks for
+the same thing links without pulling in @file{libstdc++}.
+
+That catches compiling one way and linking the other, which is the mistake
+that happens in practice.  It does not catch an ordinary @option{-m64}
+object deliberately linked into such a program: an ordinary object carries
+no mark to contradict.  Rejecting that would need a property note the
+linker treats as must-match, in the way an architecture that keeps its ABI
+variant in the ELF header -- ARM's float ABI, for one -- already refuses a
+mismatch.  The compiler can emit such a note; only the linker can refuse
+the link.
+
+The macro @code{__NULLEX_ABI__} is defined when this ABI is in effect.  It
+follows the ABI rather than the checks, so it stays defined under
+@option{-fno-nullptr-exceptions}; that is what lets the runtime built for
+this multilib define the marker symbol whether or not its own translation
+units are instrumented.
 
 @opindex miamcu
 @opindex mno-iamcu

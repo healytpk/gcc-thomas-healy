@@ -1197,6 +1197,12 @@ c_cpp_builtins (cpp_reader *pfile)
       if (flag_implicit_constexpr)
 	cpp_define (pfile, "__cpp_implicit_constexpr=20211111L");
     }
+  /* Set by the ABI option, not by -fnullptr-exceptions on its own: it says
+     the whole program is being built that way, which is what the runtime
+     keys its ABI marker off.  */
+  if (flag_nullex_abi)
+    cpp_define (pfile, "__NULLEX_ABI__");
+
   /* Note that we define this for C as well, so that we know if
      __attribute__((cleanup)) will interface with EH.  */
   if (flag_exceptions)

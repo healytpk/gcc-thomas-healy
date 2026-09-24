@@ -2470,6 +2470,14 @@ fnon-call-exceptions
 Common Var(flag_non_call_exceptions) Optimization
 Support synchronous non-call exceptions.
 
+fnullptr-exceptions
+Common Var(flag_nullptr_exceptions) Optimization
+Throw std::nullptr_error when a null pointer is dereferenced or has a non-zero offset added to it.
+
+fnullex-abi
+Common Var(flag_nullex_abi) Undocumented
+Set by an ABI option such as -m64nullex; marks the object as belonging to that ABI.
+
 foffload=
 Driver Joined RejectNegative MissingArgError(targets missing after %qs)
 

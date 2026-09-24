@@ -65,6 +65,7 @@ sources = \
 	eh_alloc.cc \
 	eh_arm.cc \
 	eh_aux_runtime.cc \
+	nullex_stubs.cc \
 	eh_call.cc \
 	eh_catch.cc \
 	eh_exception.cc \
@@ -153,6 +154,7 @@ endif
 AM_CXXFLAGS = \
 	$(glibcxx_lt_pic_flag) $(glibcxx_compiler_shared_flag) \
 	$(XTEMPLATE_FLAGS) $(FREESTANDING_FLAGS) $(EH_POOL_FLAGS) \
+	-fno-nullptr-exceptions \
 	$(WARN_CXXFLAGS) $(OPTIMIZE_CXXFLAGS)  $(CONFIG_CXXFLAGS)
 
 AM_MAKEFLAGS = \
